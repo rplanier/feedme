@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>FeedMe</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header>
+            <h1 id="app-title">FeedMe</h1>
+            <div id="connection-status" class="status-dot"></div>
+        </header>
+
+        <!-- Navigation -->
+        <nav>
+            <button class="nav-btn active" data-view="overview">Home</button>
+            <button class="nav-btn" data-view="schedules">Feed</button>
+            <button class="nav-btn" data-view="wifi">WiFi</button>
+            <button class="nav-btn" data-view="settings">Settings</button>
+        </nav>
+
+        <!-- Overview View -->
+        <main id="overview-view" class="view active">
+            <div class="status-card">
+                <div class="status-row">
+                    <span class="label">Battery</span>
+                    <span id="battery-status" class="value">--</span>
+                    <span id="battery-voltage" class="sub-value">--V</span>
+                    <span id="charging-indicator" class="charging hidden">CHG</span>
+                </div>
+                <div class="status-row">
+                    <span class="label">Device Time</span>
+                    <span id="device-time" class="value">--:--</span>
+                </div>
+                <div class="status-row">
+                    <span class="label">Next Feed</span>
+                    <span id="next-feed" class="value">--:--</span>
+                </div>
+                <div id="vacation-banner" class="banner warning hidden">
+                    Vacation Mode Active - Feeding Paused
+                </div>
+            </div>
+
+            <button id="throw-btn" class="action-btn primary">
+                <span class="btn-icon">&#9654;</span>
+                Feed Now
+            </button>
+
+            <button id="sync-time-btn" class="action-btn secondary">
+                Sync Time from Phone
+            </button>
+        </main>
+
+        <!-- Schedules View -->
+        <main id="schedules-view" class="view">
+            <div id="schedules-list" class="schedules-list">
+                <!-- Schedules populated by JS -->
+            </div>
+
+            <button id="add-schedule-btn" class="action-btn primary">
+                + Add Schedule
+            </button>
+        </main>
+
+        <!-- WiFi Schedules View -->
+        <main id="wifi-view" class="view">
+            <p class="view-description">WiFi automatically enables during these time windows:</p>
+            <div id="wifi-schedules-list" class="schedules-list">
+                <!-- WiFi Schedules populated by JS -->
+            </div>
+
+            <button id="add-wifi-schedule-btn" class="action-btn primary">
+                + Add WiFi Schedule
+            </button>
+        </main>
+
+        <!-- Settings View -->
+        <main id="settings-view" class="view">
+            <div class="settings-group">
+                <h3>Motor</h3>
+                <div class="setting-row">
+                    <label for="motor-duration">Default Duration (sec)</label>
+                    <input type="number" id="motor-duration" min="1" max="30" value="5">
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>Feeding</h3>
+                <div class="setting-row toggle-row">
+                    <label for="vacation-mode">Vacation Mode</label>
+                    <label class="toggle">
+                        <input type="checkbox" id="vacation-mode">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>Device Info</h3>
+                <div class="info-row">
+                    <span class="label">Device ID</span>
+                    <span id="device-id" class="value">----</span>
+                </div>
+            </div>
+
+            <button id="save-settings-btn" class="action-btn primary">
+                Save Settings
+            </button>
+        </main>
+
+        <!-- Schedule Editor Modal -->
+        <div id="schedule-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modal-title">Add Schedule</h2>
+                    <button class="close-btn" id="close-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="schedule-name">Name (optional)</label>
+                        <input type="text" id="schedule-name" placeholder="Auto-generated">
+                    </div>
+                    <div class="form-group">
+                        <label for="schedule-time">Time</label>
+                        <input type="time" id="schedule-time" value="06:00">
+                    </div>
+                    <div class="form-group">
+                        <label>Days</label>
+                        <div class="day-selector">
+                            <label class="day"><input type="checkbox" data-day="0"><span>S</span></label>
+                            <label class="day"><input type="checkbox" data-day="1" checked><span>M</span></label>
+                            <label class="day"><input type="checkbox" data-day="2" checked><span>T</span></label>
+                            <label class="day"><input type="checkbox" data-day="3" checked><span>W</span></label>
+                            <label class="day"><input type="checkbox" data-day="4" checked><span>T</span></label>
+                            <label class="day"><input type="checkbox" data-day="5" checked><span>F</span></label>
+                            <label class="day"><input type="checkbox" data-day="6"><span>S</span></label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="schedule-duration">Duration Override (0 = default)</label>
+                        <input type="number" id="schedule-duration" min="0" max="30" value="0">
+                    </div>
+                    <div class="form-group toggle-row">
+                        <label for="schedule-enabled">Enabled</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="schedule-enabled" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="delete-schedule-btn" class="action-btn danger hidden">Delete</button>
+                    <button id="save-schedule-btn" class="action-btn primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- WiFi Schedule Editor Modal -->
+        <div id="wifi-schedule-modal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="wifi-modal-title">Add WiFi Schedule</h2>
+                    <button class="close-btn" id="close-wifi-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="wifi-schedule-name">Name (optional)</label>
+                        <input type="text" id="wifi-schedule-name" placeholder="WiFi Window">
+                    </div>
+                    <div class="form-group">
+                        <label for="wifi-start-time">Start Time</label>
+                        <input type="time" id="wifi-start-time" value="06:00">
+                    </div>
+                    <div class="form-group">
+                        <label for="wifi-end-time">End Time</label>
+                        <input type="time" id="wifi-end-time" value="08:00">
+                    </div>
+                    <div class="form-group">
+                        <label>Days</label>
+                        <div class="day-selector" id="wifi-day-selector">
+                            <label class="day"><input type="checkbox" data-day="0"><span>S</span></label>
+                            <label class="day"><input type="checkbox" data-day="1" checked><span>M</span></label>
+                            <label class="day"><input type="checkbox" data-day="2" checked><span>T</span></label>
+                            <label class="day"><input type="checkbox" data-day="3" checked><span>W</span></label>
+                            <label class="day"><input type="checkbox" data-day="4" checked><span>T</span></label>
+                            <label class="day"><input type="checkbox" data-day="5" checked><span>F</span></label>
+                            <label class="day"><input type="checkbox" data-day="6"><span>S</span></label>
+                        </div>
+                    </div>
+                    <div class="form-group toggle-row">
+                        <label for="wifi-schedule-enabled">Enabled</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="wifi-schedule-enabled" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="delete-wifi-schedule-btn" class="action-btn danger hidden">Delete</button>
+                    <button id="save-wifi-schedule-btn" class="action-btn primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notification -->
+        <div id="toast" class="toast hidden"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
