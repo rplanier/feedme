@@ -733,6 +733,16 @@ void Display::setPairingInfo(const char* ssid, const char* password) {
     }
 }
 
+void Display::setBacklight(bool on) {
+    if (backlightOn != on) {
+        backlightOn = on;
+        digitalWrite(PIN_TFT_BACKLIGHT, on ? HIGH : LOW);
+        if (on) {
+            needsRedraw = true;  // Redraw when turning back on
+        }
+    }
+}
+
 void Display::drawHeader(const char* title) {
     tft.fillRect(0, 0, SCREEN_WIDTH, 24, Colors::HEADER_BG);
     tft.setTextColor(Colors::TEXT, Colors::HEADER_BG);

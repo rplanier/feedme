@@ -69,9 +69,9 @@ enum class BatteryType : uint8_t {
     GEL = 2     // Gel cell (deeper discharge tolerant)
 };
 
-// Voltage divider ratio: if using 100K/22K, ratio = (100+22)/22 = 5.545
-// Adjust based on actual resistor values
-constexpr float BATTERY_DIVIDER_RATIO = 5.545f;
+// Voltage divider ratio: theoretical 100K/22K = 5.545
+// Calibrated based on actual measurements (accounts for resistor tolerance and ADC error)
+constexpr float BATTERY_DIVIDER_RATIO = 5.9f;
 
 // ADC reference voltage
 constexpr float ADC_REFERENCE_VOLTAGE = 3.3f;
@@ -102,6 +102,29 @@ constexpr float BATTERY_CRITICAL_GEL = 11.5f;   // Can go slightly deeper
 
 // Charging detection: voltage above this suggests solar is charging
 constexpr float BATTERY_CHARGING_THRESHOLD = 13.0f;
+
+// =============================================================================
+// Sleep/Display Timeout Settings
+// =============================================================================
+
+// Sleep timeout options (seconds, 0 = never sleep)
+enum class SleepTimeout : uint8_t {
+    TIMEOUT_15S = 15,
+    TIMEOUT_30S = 30,
+    TIMEOUT_1M = 60,
+    TIMEOUT_2M = 120,
+    TIMEOUT_5M = 255,   // Use 255 to represent 300s (5 min) since uint8_t max is 255
+    TIMEOUT_NEVER = 0
+};
+
+// Default sleep timeout
+constexpr SleepTimeout DEFAULT_SLEEP_TIMEOUT = SleepTimeout::TIMEOUT_30S;
+
+// Get actual seconds from SleepTimeout enum
+inline uint16_t getSleepTimeoutSeconds(SleepTimeout timeout) {
+    if (timeout == SleepTimeout::TIMEOUT_5M) return 300;
+    return static_cast<uint8_t>(timeout);
+}
 
 // =============================================================================
 // WiFi Settings

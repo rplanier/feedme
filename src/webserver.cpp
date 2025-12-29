@@ -458,6 +458,9 @@ void WebServer::handleGetSettings(AsyncWebServerRequest* request) {
     doc["batteryType"] = static_cast<uint8_t>(settings.batteryType);
     doc["batteryTypeName"] = settings.getBatteryTypeName();
     doc["batteryCriticalVoltage"] = settings.getCriticalVoltage();
+    doc["sleepTimeout"] = static_cast<uint8_t>(settings.sleepTimeout);
+    doc["sleepTimeoutName"] = settings.getSleepTimeoutName();
+    doc["sleepTimeoutSeconds"] = settings.getSleepTimeoutSeconds();
 
     String response;
     serializeJson(doc, response);
@@ -488,6 +491,14 @@ void WebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8_t* da
         uint8_t type = doc["batteryType"];
         if (type <= 2) {  // Valid range: 0=SLA, 1=AGM, 2=GEL
             settings.batteryType = static_cast<BatteryType>(type);
+        }
+    }
+    if (doc["sleepTimeout"].is<uint8_t>()) {
+        uint8_t timeout = doc["sleepTimeout"];
+        // Validate against known enum values
+        if (timeout == 0 || timeout == 15 || timeout == 30 ||
+            timeout == 60 || timeout == 120 || timeout == 255) {
+            settings.sleepTimeout = static_cast<SleepTimeout>(timeout);
         }
     }
 

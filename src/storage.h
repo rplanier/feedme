@@ -48,6 +48,7 @@ struct Settings {
     uint8_t motorDuration;          // Default motor duration in seconds
     bool vacationMode;
     BatteryType batteryType;        // SLA, AGM, or GEL
+    SleepTimeout sleepTimeout;      // Display/sleep timeout
 
     // Get critical voltage threshold based on battery type
     float getCriticalVoltage() const {
@@ -63,6 +64,22 @@ struct Settings {
             case BatteryType::AGM: return "AGM";
             case BatteryType::GEL: return "Gel";
             default: return "SLA";
+        }
+    }
+
+    uint16_t getSleepTimeoutSeconds() const {
+        return ::getSleepTimeoutSeconds(sleepTimeout);
+    }
+
+    const char* getSleepTimeoutName() const {
+        switch (sleepTimeout) {
+            case SleepTimeout::TIMEOUT_15S: return "15 sec";
+            case SleepTimeout::TIMEOUT_30S: return "30 sec";
+            case SleepTimeout::TIMEOUT_1M: return "1 min";
+            case SleepTimeout::TIMEOUT_2M: return "2 min";
+            case SleepTimeout::TIMEOUT_5M: return "5 min";
+            case SleepTimeout::TIMEOUT_NEVER: return "Never";
+            default: return "30 sec";
         }
     }
 };

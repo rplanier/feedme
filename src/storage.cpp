@@ -67,13 +67,15 @@ void Storage::initDefaultSettings() {
     strncpy(settings.deviceId, deviceId, 5);
     settings.motorDuration = MOTOR_DEFAULT_DURATION_SEC;
     settings.vacationMode = false;
-    settings.batteryType = BatteryType::SLA;  // Default to standard SLA
+    settings.batteryType = BatteryType::SLA;
+    settings.sleepTimeout = DEFAULT_SLEEP_TIMEOUT;
 }
 
 void Storage::loadSettings() {
     settings.motorDuration = prefs.getUChar(PREF_MOTOR_DURATION, MOTOR_DEFAULT_DURATION_SEC);
     settings.vacationMode = prefs.getBool(PREF_VACATION_MODE, false);
     settings.batteryType = static_cast<BatteryType>(prefs.getUChar("batType", static_cast<uint8_t>(BatteryType::SLA)));
+    settings.sleepTimeout = static_cast<SleepTimeout>(prefs.getUChar("sleepTmout", static_cast<uint8_t>(DEFAULT_SLEEP_TIMEOUT)));
     strncpy(settings.deviceId, deviceId, 5);
 }
 
@@ -81,6 +83,7 @@ void Storage::saveSettings() {
     prefs.putUChar(PREF_MOTOR_DURATION, settings.motorDuration);
     prefs.putBool(PREF_VACATION_MODE, settings.vacationMode);
     prefs.putUChar("batType", static_cast<uint8_t>(settings.batteryType));
+    prefs.putUChar("sleepTmout", static_cast<uint8_t>(settings.sleepTimeout));
     Serial.println("Storage: Settings saved");
 }
 

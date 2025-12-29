@@ -59,6 +59,10 @@ public:
     // Force redraw on next update
     void invalidate() { needsRedraw = true; }
 
+    // Backlight control
+    void setBacklight(bool on);
+    bool isBacklightOn() const { return backlightOn; }
+
     // Update status data for home screen
     void setStatus(const StatusData& status);
 
@@ -70,6 +74,7 @@ private:
     Screen currentScreen = Screen::OVERVIEW;
     Screen previousScreen = Screen::OVERVIEW;
     bool needsRedraw = true;
+    bool backlightOn = true;
 
     // Status data cache
     StatusData status = {};
