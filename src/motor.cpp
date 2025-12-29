@@ -106,16 +106,16 @@ void Motor::setDefaultDuration(uint8_t durationSec) {
 }
 
 void Motor::activateMotor() {
-    digitalWrite(PIN_MOTOR_RELAY, HIGH);
+    digitalWrite(PIN_MOTOR_RELAY, MOTOR_INVERTED ? LOW : HIGH);
 }
 
 void Motor::deactivateMotor() {
-    digitalWrite(PIN_MOTOR_RELAY, LOW);
+    digitalWrite(PIN_MOTOR_RELAY, MOTOR_INVERTED ? HIGH : LOW);
 }
 
 void IRAM_ATTR Motor::onSafetyTimeout() {
     // Emergency cutoff - called from ISR
     // Directly manipulate GPIO for immediate response
-    digitalWrite(PIN_MOTOR_RELAY, LOW);
+    digitalWrite(PIN_MOTOR_RELAY, MOTOR_INVERTED ? HIGH : LOW);
     safetyTriggered = true;
 }

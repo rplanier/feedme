@@ -109,6 +109,23 @@ void loop() {
         Serial.println("WebServer stopped");
     }
 
+    // Update display status periodically
+    if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
+        lastStatusUpdate = now;
+
+        StatusData status;
+        status.batteryVoltage = battery.getVoltage();
+        status.isCharging = battery.isCharging();
+        status.batteryStatus = battery.getStatusText();
+        display.setStatus(status);
+
+        // Debug output
+        Serial.printf("Battery: %.2fV (%s)%s\n",
+            status.batteryVoltage,
+            status.batteryStatus,
+            status.isCharging ? " [Charging]" : "");
+    }
+
     // Handle button events for display navigation
     ButtonEvent event = buttons.getEvent();
     if (event != ButtonEvent::NONE) {

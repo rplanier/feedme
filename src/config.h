@@ -21,7 +21,7 @@ constexpr uint8_t PIN_BUTTON_BOTTOM = 0;   // GPIO0 (Boot button), bottom in lan
 constexpr uint8_t PIN_MOTOR_RELAY = 21;    // External relay/MOSFET
 
 // Battery sensing (external voltage divider required for 12V)
-constexpr uint8_t PIN_BATTERY_ADC = 4;     // ADC capable GPIO
+constexpr uint8_t PIN_BATTERY_ADC = 3;     // ADC capable GPIO (GPIO3 on T-Display-S3)
 
 // Display backlight (T-Display-S3 uses GPIO 38)
 constexpr uint8_t PIN_TFT_BACKLIGHT = 38;
@@ -54,9 +54,20 @@ constexpr uint8_t MOTOR_DEFAULT_DURATION_SEC = 5;
 // Absolute maximum motor run time (safety cutoff)
 constexpr uint8_t MOTOR_MAX_DURATION_SEC = 30;
 
+// Inverted motor control (true for 2N7000 + MOSFET gate driver circuit)
+// When true: GPIO LOW = motor ON, GPIO HIGH = motor OFF
+constexpr bool MOTOR_INVERTED = true;
+
 // =============================================================================
-// Battery Thresholds (12V lead-acid)
+// Battery Settings
 // =============================================================================
+
+// Battery types with different discharge characteristics
+enum class BatteryType : uint8_t {
+    SLA = 0,    // Standard Sealed Lead Acid / Flooded
+    AGM = 1,    // Absorbed Glass Mat (deeper discharge tolerant)
+    GEL = 2     // Gel cell (deeper discharge tolerant)
+};
 
 // Voltage divider ratio: if using 100K/22K, ratio = (100+22)/22 = 5.545
 // Adjust based on actual resistor values
@@ -68,10 +79,26 @@ constexpr float ADC_REFERENCE_VOLTAGE = 3.3f;
 // ADC resolution (ESP32-S3 is 12-bit)
 constexpr uint16_t ADC_MAX_VALUE = 4095;
 
-// Battery status thresholds (volts)
-constexpr float BATTERY_VOLTAGE_GOOD = 12.4f;   // Above this = Good
-constexpr float BATTERY_VOLTAGE_OKAY = 11.8f;   // Above this = Okay, below = Low
-constexpr float BATTERY_VOLTAGE_CRITICAL = 11.0f;  // Below this = disable motor
+// Battery status thresholds (12V lead-acid, based on state of charge curves)
+// These are open-circuit voltages - under load will be slightly lower
+//
+// State of Charge vs Voltage (12V battery, 6 cells):
+//   100% = 12.7V (2.12V/cell)
+//    75% = 12.4V (2.07V/cell)
+//    50% = 12.2V (2.03V/cell)
+//    25% = 12.0V (2.00V/cell)
+//     0% = 11.8V (1.97V/cell)
+//
+constexpr float BATTERY_VOLTAGE_GOOD = 12.5f;   // ~75%+ charge
+constexpr float BATTERY_VOLTAGE_OKAY = 12.2f;   // ~50%+ charge
+constexpr float BATTERY_VOLTAGE_LOW = 11.9f;    // ~25%+ charge
+
+// Critical thresholds vary by battery type (below this = disable motor)
+// SLA/Flooded: more sensitive to deep discharge
+// AGM/Gel: can tolerate deeper discharge without damage
+constexpr float BATTERY_CRITICAL_SLA = 11.8f;   // Don't go below 0% SOC
+constexpr float BATTERY_CRITICAL_AGM = 11.5f;   // Can go slightly deeper
+constexpr float BATTERY_CRITICAL_GEL = 11.5f;   // Can go slightly deeper
 
 // Charging detection: voltage above this suggests solar is charging
 constexpr float BATTERY_CHARGING_THRESHOLD = 13.0f;

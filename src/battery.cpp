@@ -1,4 +1,5 @@
 #include "battery.h"
+#include "storage.h"
 
 Battery battery;
 
@@ -66,13 +67,18 @@ float Battery::readRawVoltage() {
 }
 
 void Battery::updateStatus() {
-    // Determine battery status
+    // Get critical threshold based on battery type
+    float criticalVoltage = storage.getSettings().getCriticalVoltage();
+
+    // Determine battery status using standard thresholds
     if (voltage >= BATTERY_VOLTAGE_GOOD) {
         status = BatteryStatus::GOOD;
     } else if (voltage >= BATTERY_VOLTAGE_OKAY) {
         status = BatteryStatus::OKAY;
-    } else if (voltage >= BATTERY_VOLTAGE_CRITICAL) {
+    } else if (voltage >= BATTERY_VOLTAGE_LOW) {
         status = BatteryStatus::LOW_BATTERY;
+    } else if (voltage >= criticalVoltage) {
+        status = BatteryStatus::LOW_BATTERY;  // Still low, but not critical yet
     } else {
         status = BatteryStatus::CRITICAL;
     }
@@ -91,7 +97,7 @@ const char* Battery::getStatusText() const {
         case BatteryStatus::LOW_BATTERY:
             return "Low";
         case BatteryStatus::CRITICAL:
-            return "CRIT";
+            return "Critical";
         default:
             return "???";
     }

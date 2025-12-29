@@ -710,8 +710,17 @@ void Display::setScreen(Screen screen) {
 }
 
 void Display::setStatus(const StatusData& newStatus) {
+    // Only redraw if values meaningfully changed (0.1V threshold to avoid noise-triggered redraws)
+    float voltageDiff = newStatus.batteryVoltage - status.batteryVoltage;
+    if (voltageDiff < 0) voltageDiff = -voltageDiff;  // abs
+
+    bool changed = (voltageDiff >= 0.1f) ||
+                   (status.isCharging != newStatus.isCharging) ||
+                   (status.batteryStatus != newStatus.batteryStatus);
+
     status = newStatus;
-    if (currentScreen == Screen::OVERVIEW) {
+
+    if (changed && currentScreen == Screen::OVERVIEW) {
         needsRedraw = true;
     }
 }

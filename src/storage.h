@@ -47,9 +47,24 @@ struct Settings {
     char deviceId[5];               // 4-digit ID + null
     uint8_t motorDuration;          // Default motor duration in seconds
     bool vacationMode;
-    float batteryGoodThreshold;
-    float batteryOkayThreshold;
-    float batteryCriticalThreshold;
+    BatteryType batteryType;        // SLA, AGM, or GEL
+
+    // Get critical voltage threshold based on battery type
+    float getCriticalVoltage() const {
+        switch (batteryType) {
+            case BatteryType::AGM: return BATTERY_CRITICAL_AGM;
+            case BatteryType::GEL: return BATTERY_CRITICAL_GEL;
+            default: return BATTERY_CRITICAL_SLA;
+        }
+    }
+
+    const char* getBatteryTypeName() const {
+        switch (batteryType) {
+            case BatteryType::AGM: return "AGM";
+            case BatteryType::GEL: return "Gel";
+            default: return "SLA";
+        }
+    }
 };
 
 class Storage {

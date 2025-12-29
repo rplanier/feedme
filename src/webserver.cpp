@@ -455,9 +455,9 @@ void WebServer::handleGetSettings(AsyncWebServerRequest* request) {
     doc["deviceId"] = settings.deviceId;
     doc["motorDuration"] = settings.motorDuration;
     doc["vacationMode"] = settings.vacationMode;
-    doc["batteryGoodThreshold"] = settings.batteryGoodThreshold;
-    doc["batteryOkayThreshold"] = settings.batteryOkayThreshold;
-    doc["batteryCriticalThreshold"] = settings.batteryCriticalThreshold;
+    doc["batteryType"] = static_cast<uint8_t>(settings.batteryType);
+    doc["batteryTypeName"] = settings.getBatteryTypeName();
+    doc["batteryCriticalVoltage"] = settings.getCriticalVoltage();
 
     String response;
     serializeJson(doc, response);
@@ -477,21 +477,18 @@ void WebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8_t* da
 
     Settings& settings = storage.getSettings();
 
-    if (doc.containsKey("motorDuration")) {
+    if (doc["motorDuration"].is<uint8_t>()) {
         settings.motorDuration = doc["motorDuration"];
         motor.setDefaultDuration(settings.motorDuration);
     }
-    if (doc.containsKey("vacationMode")) {
+    if (doc["vacationMode"].is<bool>()) {
         settings.vacationMode = doc["vacationMode"];
     }
-    if (doc.containsKey("batteryGoodThreshold")) {
-        settings.batteryGoodThreshold = doc["batteryGoodThreshold"];
-    }
-    if (doc.containsKey("batteryOkayThreshold")) {
-        settings.batteryOkayThreshold = doc["batteryOkayThreshold"];
-    }
-    if (doc.containsKey("batteryCriticalThreshold")) {
-        settings.batteryCriticalThreshold = doc["batteryCriticalThreshold"];
+    if (doc["batteryType"].is<uint8_t>()) {
+        uint8_t type = doc["batteryType"];
+        if (type <= 2) {  // Valid range: 0=SLA, 1=AGM, 2=GEL
+            settings.batteryType = static_cast<BatteryType>(type);
+        }
     }
 
     storage.saveSettings();
@@ -509,7 +506,7 @@ void WebServer::handleVacationMode(AsyncWebServerRequest* request, uint8_t* data
         return;
     }
 
-    if (!doc.containsKey("enabled")) {
+    if (!doc["enabled"].is<bool>()) {
         sendError(request, 400, "Missing enabled field");
         return;
     }

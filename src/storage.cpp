@@ -67,26 +67,20 @@ void Storage::initDefaultSettings() {
     strncpy(settings.deviceId, deviceId, 5);
     settings.motorDuration = MOTOR_DEFAULT_DURATION_SEC;
     settings.vacationMode = false;
-    settings.batteryGoodThreshold = BATTERY_VOLTAGE_GOOD;
-    settings.batteryOkayThreshold = BATTERY_VOLTAGE_OKAY;
-    settings.batteryCriticalThreshold = BATTERY_VOLTAGE_CRITICAL;
+    settings.batteryType = BatteryType::SLA;  // Default to standard SLA
 }
 
 void Storage::loadSettings() {
     settings.motorDuration = prefs.getUChar(PREF_MOTOR_DURATION, MOTOR_DEFAULT_DURATION_SEC);
     settings.vacationMode = prefs.getBool(PREF_VACATION_MODE, false);
-    settings.batteryGoodThreshold = prefs.getFloat("batGood", BATTERY_VOLTAGE_GOOD);
-    settings.batteryOkayThreshold = prefs.getFloat("batOkay", BATTERY_VOLTAGE_OKAY);
-    settings.batteryCriticalThreshold = prefs.getFloat("batCrit", BATTERY_VOLTAGE_CRITICAL);
+    settings.batteryType = static_cast<BatteryType>(prefs.getUChar("batType", static_cast<uint8_t>(BatteryType::SLA)));
     strncpy(settings.deviceId, deviceId, 5);
 }
 
 void Storage::saveSettings() {
     prefs.putUChar(PREF_MOTOR_DURATION, settings.motorDuration);
     prefs.putBool(PREF_VACATION_MODE, settings.vacationMode);
-    prefs.putFloat("batGood", settings.batteryGoodThreshold);
-    prefs.putFloat("batOkay", settings.batteryOkayThreshold);
-    prefs.putFloat("batCrit", settings.batteryCriticalThreshold);
+    prefs.putUChar("batType", static_cast<uint8_t>(settings.batteryType));
     Serial.println("Storage: Settings saved");
 }
 
