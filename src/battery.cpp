@@ -43,25 +43,62 @@ void Battery::update() {
     samples[sampleIndex] = readRawVoltage();
     sampleIndex = (sampleIndex + 1) % SAMPLE_COUNT;
 
-    // Calculate smoothed voltage
-    float sum = 0;
-    for (int i = 0; i < SAMPLE_COUNT; i++) {
-        sum += samples[i];
+    // Calculate smoothed voltage with outlier rejection
+    // First, find median by sorting a copy
+    float sorted[SAMPLE_COUNT];
+    memcpy(sorted, samples, sizeof(samples));
+    for (int i = 0; i < SAMPLE_COUNT - 1; i++) {
+        for (int j = i + 1; j < SAMPLE_COUNT; j++) {
+            if (sorted[j] < sorted[i]) {
+                float temp = sorted[i];
+                sorted[i] = sorted[j];
+                sorted[j] = temp;
+            }
+        }
     }
-    voltage = sum / SAMPLE_COUNT;
+    float median = sorted[SAMPLE_COUNT / 2];
+
+    // Average samples within 0.5V of median (reject outliers)
+    float sum = 0;
+    int validCount = 0;
+    for (int i = 0; i < SAMPLE_COUNT; i++) {
+        if (abs(samples[i] - median) < 0.5f) {
+            sum += samples[i];
+            validCount++;
+        }
+    }
+
+    if (validCount > 0) {
+        voltage = sum / validCount;
+    } else {
+        voltage = median;  // Fallback to median if all are outliers
+    }
 
     updateStatus();
 }
 
 float Battery::readRawVoltage() {
-    // Read ADC value
-    int rawValue = analogRead(PIN_BATTERY_ADC);
+    // Read ADC value (take multiple reads and average for noise reduction)
+    int rawSum = 0;
+    for (int i = 0; i < 4; i++) {
+        rawSum += analogRead(PIN_BATTERY_ADC);
+        delayMicroseconds(100);
+    }
+    int rawValue = rawSum / 4;
 
     // Convert to voltage at ADC pin
     float adcVoltage = (rawValue / (float)ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
 
     // Apply voltage divider ratio to get actual battery voltage
     float batteryVoltage = adcVoltage * BATTERY_DIVIDER_RATIO;
+
+    // Debug output every 10 seconds (controlled by caller)
+    static uint32_t lastDebugPrint = 0;
+    if (millis() - lastDebugPrint >= 10000) {
+        lastDebugPrint = millis();
+        Serial.printf("Battery: raw=%d, adcV=%.3f, battV=%.2f\n",
+                      rawValue, adcVoltage, batteryVoltage);
+    }
 
     return batteryVoltage;
 }
@@ -83,9 +120,9 @@ void Battery::updateStatus() {
         status = BatteryStatus::CRITICAL;
     }
 
-    // Detect charging: voltage above charging threshold or rising significantly
-    charging = (voltage >= BATTERY_CHARGING_THRESHOLD) ||
-               (voltage > previousVoltage + 0.05f);  // Rising by >50mV
+    // Detect charging: voltage above charging threshold
+    // Only consider charging if voltage is in valid battery range (>10V) and above threshold
+    charging = (voltage >= 10.0f) && (voltage >= BATTERY_CHARGING_THRESHOLD);
 }
 
 const char* Battery::getStatusText() const {

@@ -28,11 +28,11 @@ bool Storage::begin() {
     // Load schedules
     loadSchedules();
 
-    // Load WiFi schedules
-    loadWifiSchedules();
+    // Load BLE schedules
+    loadBleSchedules();
 
-    Serial.printf("Storage: Initialized, device ID: %s, %d schedules, %d WiFi schedules\n",
-                  deviceId, scheduleCount, wifiScheduleCount);
+    Serial.printf("Storage: Initialized, device ID: %s, %d schedules, %d BLE schedules\n",
+                  deviceId, scheduleCount, bleScheduleCount);
     return true;
 }
 
@@ -460,13 +460,13 @@ bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
     return false;
 }
 
-// WifiSchedule helper methods
-bool WifiSchedule::isActiveOnDay(uint8_t dayOfWeek) const {
+// BleSchedule helper methods
+bool BleSchedule::isActiveOnDay(uint8_t dayOfWeek) const {
     if (dayOfWeek > 6) return false;
     return (days & (1 << dayOfWeek)) != 0;
 }
 
-bool WifiSchedule::isActiveNow(int hour, int minute, int dayOfWeek) const {
+bool BleSchedule::isActiveNow(int hour, int minute, int dayOfWeek) const {
     if (!enabled || !isActiveOnDay(dayOfWeek)) {
         return false;
     }
@@ -484,12 +484,12 @@ bool WifiSchedule::isActiveNow(int hour, int minute, int dayOfWeek) const {
     }
 }
 
-// WiFi Schedules storage
-void Storage::loadWifiSchedules() {
-    File file = LittleFS.open("/wifi_schedules.json", "r");
+// BLE Schedules storage
+void Storage::loadBleSchedules() {
+    File file = LittleFS.open("/ble_schedules.json", "r");
     if (!file) {
-        Serial.println("Storage: No WiFi schedules file found");
-        wifiScheduleCount = 0;
+        Serial.println("Storage: No BLE schedules file found");
+        bleScheduleCount = 0;
         return;
     }
 
@@ -498,45 +498,45 @@ void Storage::loadWifiSchedules() {
     file.close();
 
     if (error) {
-        Serial.printf("Storage: Failed to parse WiFi schedules: %s\n", error.c_str());
-        wifiScheduleCount = 0;
+        Serial.printf("Storage: Failed to parse BLE schedules: %s\n", error.c_str());
+        bleScheduleCount = 0;
         return;
     }
 
-    JsonArray arr = doc["wifiSchedules"].as<JsonArray>();
-    wifiScheduleCount = 0;
-    nextWifiScheduleId = 1;
+    JsonArray arr = doc["bleSchedules"].as<JsonArray>();
+    bleScheduleCount = 0;
+    nextBleScheduleId = 1;
 
     for (JsonObject obj : arr) {
-        if (wifiScheduleCount >= MAX_WIFI_SCHEDULES) break;
+        if (bleScheduleCount >= MAX_BLE_SCHEDULES) break;
 
-        WifiSchedule& s = wifiSchedules[wifiScheduleCount];
-        s.id = obj["id"] | nextWifiScheduleId;
-        if (s.id >= nextWifiScheduleId) {
-            nextWifiScheduleId = s.id + 1;
+        BleSchedule& s = bleSchedules[bleScheduleCount];
+        s.id = obj["id"] | nextBleScheduleId;
+        if (s.id >= nextBleScheduleId) {
+            nextBleScheduleId = s.id + 1;
         }
 
         strlcpy(s.name, obj["name"] | "", sizeof(s.name));
-        s.startHour = obj["startHour"] | 6;
+        s.startHour = obj["startHour"] | 4;
         s.startMinute = obj["startMinute"] | 0;
-        s.endHour = obj["endHour"] | 8;
+        s.endHour = obj["endHour"] | 20;
         s.endMinute = obj["endMinute"] | 0;
         s.days = obj["days"] | 0x7F;
         s.enabled = obj["enabled"] | true;
 
-        wifiScheduleCount++;
+        bleScheduleCount++;
     }
 
-    Serial.printf("Storage: Loaded %d WiFi schedules\n", wifiScheduleCount);
+    Serial.printf("Storage: Loaded %d BLE schedules\n", bleScheduleCount);
 }
 
-void Storage::saveWifiSchedules() {
+void Storage::saveBleSchedules() {
     JsonDocument doc;
-    JsonArray arr = doc["wifiSchedules"].to<JsonArray>();
+    JsonArray arr = doc["bleSchedules"].to<JsonArray>();
 
-    for (int i = 0; i < wifiScheduleCount; i++) {
+    for (int i = 0; i < bleScheduleCount; i++) {
         JsonObject obj = arr.add<JsonObject>();
-        WifiSchedule& s = wifiSchedules[i];
+        BleSchedule& s = bleSchedules[i];
 
         obj["id"] = s.id;
         obj["name"] = s.name;
@@ -548,62 +548,62 @@ void Storage::saveWifiSchedules() {
         obj["enabled"] = s.enabled;
     }
 
-    File file = LittleFS.open("/wifi_schedules.json", "w");
+    File file = LittleFS.open("/ble_schedules.json", "w");
     if (!file) {
-        Serial.println("Storage: Failed to open WiFi schedules file for writing");
+        Serial.println("Storage: Failed to open BLE schedules file for writing");
         return;
     }
 
     serializeJson(doc, file);
     file.close();
-    Serial.printf("Storage: Saved %d WiFi schedules\n", wifiScheduleCount);
+    Serial.printf("Storage: Saved %d BLE schedules\n", bleScheduleCount);
 }
 
-WifiSchedule* Storage::getWifiSchedule(int index) {
-    if (index < 0 || index >= wifiScheduleCount) {
+BleSchedule* Storage::getBleSchedule(int index) {
+    if (index < 0 || index >= bleScheduleCount) {
         return nullptr;
     }
-    return &wifiSchedules[index];
+    return &bleSchedules[index];
 }
 
-WifiSchedule* Storage::getWifiScheduleById(uint16_t id) {
-    for (int i = 0; i < wifiScheduleCount; i++) {
-        if (wifiSchedules[i].id == id) {
-            return &wifiSchedules[i];
+BleSchedule* Storage::getBleScheduleById(uint16_t id) {
+    for (int i = 0; i < bleScheduleCount; i++) {
+        if (bleSchedules[i].id == id) {
+            return &bleSchedules[i];
         }
     }
     return nullptr;
 }
 
-bool Storage::addWifiSchedule(const WifiSchedule& schedule) {
-    if (wifiScheduleCount >= MAX_WIFI_SCHEDULES) {
-        Serial.println("Storage: Max WiFi schedules reached");
+bool Storage::addBleSchedule(const BleSchedule& schedule) {
+    if (bleScheduleCount >= MAX_BLE_SCHEDULES) {
+        Serial.println("Storage: Max BLE schedules reached");
         return false;
     }
 
-    wifiSchedules[wifiScheduleCount] = schedule;
-    wifiSchedules[wifiScheduleCount].id = nextWifiScheduleId++;
-    wifiScheduleCount++;
-    saveWifiSchedules();
+    bleSchedules[bleScheduleCount] = schedule;
+    bleSchedules[bleScheduleCount].id = nextBleScheduleId++;
+    bleScheduleCount++;
+    saveBleSchedules();
     return true;
 }
 
-bool Storage::updateWifiSchedule(uint16_t id, const WifiSchedule& schedule) {
-    WifiSchedule* existing = getWifiScheduleById(id);
+bool Storage::updateBleSchedule(uint16_t id, const BleSchedule& schedule) {
+    BleSchedule* existing = getBleScheduleById(id);
     if (!existing) {
         return false;
     }
 
     *existing = schedule;
     existing->id = id;  // Preserve original ID
-    saveWifiSchedules();
+    saveBleSchedules();
     return true;
 }
 
-bool Storage::deleteWifiSchedule(uint16_t id) {
+bool Storage::deleteBleSchedule(uint16_t id) {
     int index = -1;
-    for (int i = 0; i < wifiScheduleCount; i++) {
-        if (wifiSchedules[i].id == id) {
+    for (int i = 0; i < bleScheduleCount; i++) {
+        if (bleSchedules[i].id == id) {
             index = i;
             break;
         }
@@ -614,22 +614,22 @@ bool Storage::deleteWifiSchedule(uint16_t id) {
     }
 
     // Shift remaining schedules
-    for (int i = index; i < wifiScheduleCount - 1; i++) {
-        wifiSchedules[i] = wifiSchedules[i + 1];
+    for (int i = index; i < bleScheduleCount - 1; i++) {
+        bleSchedules[i] = bleSchedules[i + 1];
     }
-    wifiScheduleCount--;
+    bleScheduleCount--;
 
-    saveWifiSchedules();
+    saveBleSchedules();
     return true;
 }
 
-String Storage::getWifiSchedulesJson() {
+String Storage::getBleSchedulesJson() {
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
 
-    for (int i = 0; i < wifiScheduleCount; i++) {
+    for (int i = 0; i < bleScheduleCount; i++) {
         JsonObject obj = arr.add<JsonObject>();
-        WifiSchedule& s = wifiSchedules[i];
+        BleSchedule& s = bleSchedules[i];
 
         obj["id"] = s.id;
         obj["name"] = s.name;
@@ -650,22 +650,24 @@ String Storage::getWifiSchedulesJson() {
     return result;
 }
 
-bool Storage::shouldWifiBeActive() {
-    if (wifiScheduleCount == 0) {
-        return false;  // No schedules means WiFi not auto-enabled
+bool Storage::shouldBleBeActive() {
+    // If no BLE schedules configured, default to always-on
+    // Users can add schedules to limit BLE hours for power savings
+    if (bleScheduleCount == 0) {
+        return true;
     }
 
     struct tm timeinfo;
-    if (!getLocalTime(&timeinfo)) {
-        return false;  // Can't determine time
+    if (!getLocalTime(&timeinfo, 0)) {  // 0 = no blocking timeout
+        return true;  // Can't determine time, keep BLE on
     }
 
     int hour = timeinfo.tm_hour;
     int minute = timeinfo.tm_min;
     int dayOfWeek = timeinfo.tm_wday;
 
-    for (int i = 0; i < wifiScheduleCount; i++) {
-        if (wifiSchedules[i].isActiveNow(hour, minute, dayOfWeek)) {
+    for (int i = 0; i < bleScheduleCount; i++) {
+        if (bleSchedules[i].isActiveNow(hour, minute, dayOfWeek)) {
             return true;
         }
     }
@@ -680,13 +682,13 @@ void Storage::resetToDefaults() {
     scheduleCount = 0;
     nextScheduleId = 1;
 
-    // Clear WiFi schedules
-    wifiScheduleCount = 0;
-    nextWifiScheduleId = 1;
+    // Clear BLE schedules
+    bleScheduleCount = 0;
+    nextBleScheduleId = 1;
 
     // Delete schedules files
     LittleFS.remove(SCHEDULES_FILE);
-    LittleFS.remove("/wifi_schedules.json");
+    LittleFS.remove("/ble_schedules.json");
 
     // Reset settings to defaults
     initDefaultSettings();

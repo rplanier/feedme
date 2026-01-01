@@ -3,11 +3,18 @@
 Buttons buttons;
 
 void Buttons::begin() {
-    pinMode(PIN_BUTTON_TOP, INPUT_PULLUP);
-    pinMode(PIN_BUTTON_BOTTOM, INPUT_PULLUP);
-
-    topButton = {};
-    bottomButton = {};
+    // External buttons with internal pull-ups (active low)
+#if SINGLE_BUTTON_MODE
+    // Single button mode: only one button for both navigation and actions
+    pinMode(PIN_BUTTON, INPUT_PULLUP);
+    singleButton = {};
+#else
+    // Dual button mode: separate prev/next buttons
+    pinMode(PIN_BUTTON_PREV, INPUT_PULLUP);
+    pinMode(PIN_BUTTON_NEXT, INPUT_PULLUP);
+    prevButton = {};
+    nextButton = {};
+#endif
     pendingEvent = ButtonEvent::NONE;
 }
 
@@ -20,13 +27,19 @@ void Buttons::update() {
     }
     lastUpdateTime = now;
 
-    // Read current state (buttons are active low)
-    bool topPressed = !digitalRead(PIN_BUTTON_TOP);
-    bool bottomPressed = !digitalRead(PIN_BUTTON_BOTTOM);
+#if SINGLE_BUTTON_MODE
+    // Single button: press = next screen, hold = context action
+    bool pressed = !digitalRead(PIN_BUTTON);
+    updateButton(singleButton, pressed, ButtonEvent::NEXT_PRESS, ButtonEvent::NEXT_HOLD);
+#else
+    // Read current state (buttons are active low with pull-up)
+    bool prevPressed = !digitalRead(PIN_BUTTON_PREV);
+    bool nextPressed = !digitalRead(PIN_BUTTON_NEXT);
 
     // Update each button
-    updateButton(topButton, topPressed, ButtonEvent::TOP_PRESS, ButtonEvent::TOP_HOLD);
-    updateButton(bottomButton, bottomPressed, ButtonEvent::BOTTOM_PRESS, ButtonEvent::BOTTOM_HOLD);
+    updateButton(prevButton, prevPressed, ButtonEvent::PREV_PRESS, ButtonEvent::PREV_HOLD);
+    updateButton(nextButton, nextPressed, ButtonEvent::NEXT_PRESS, ButtonEvent::NEXT_HOLD);
+#endif
 }
 
 void Buttons::updateButton(ButtonState& state, bool currentlyPressed,

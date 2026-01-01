@@ -3,13 +3,13 @@
 #include <Arduino.h>
 #include "config.h"
 
-// Button event types
+// Button event types (semantic naming for navigation)
 enum class ButtonEvent {
     NONE,
-    TOP_PRESS,      // Previous
-    TOP_HOLD,       // Back
-    BOTTOM_PRESS,   // Next
-    BOTTOM_HOLD     // Select
+    PREV_PRESS,     // Previous page / scroll up / decrease
+    PREV_HOLD,      // Back / cancel / exit mode
+    NEXT_PRESS,     // Next page / scroll down / increase
+    NEXT_HOLD       // Select / confirm / enter mode
 };
 
 // Button state for internal tracking
@@ -27,12 +27,21 @@ public:
     ButtonEvent getEvent();
 
     // Direct state access if needed
-    bool isTopPressed() const { return topButton.isPressed; }
-    bool isBottomPressed() const { return bottomButton.isPressed; }
+#if SINGLE_BUTTON_MODE
+    bool isPrevPressed() const { return singleButton.isPressed; }
+    bool isNextPressed() const { return singleButton.isPressed; }
+#else
+    bool isPrevPressed() const { return prevButton.isPressed; }
+    bool isNextPressed() const { return nextButton.isPressed; }
+#endif
 
 private:
-    ButtonState topButton = {};
-    ButtonState bottomButton = {};
+#if SINGLE_BUTTON_MODE
+    ButtonState singleButton = {};
+#else
+    ButtonState prevButton = {};
+    ButtonState nextButton = {};
+#endif
     ButtonEvent pendingEvent = ButtonEvent::NONE;
     uint32_t lastUpdateTime = 0;
 

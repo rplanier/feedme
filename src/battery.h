@@ -33,8 +33,8 @@ private:
     uint32_t lastReadTime = 0;
     static constexpr uint32_t READ_INTERVAL_MS = 1000;  // Read every second
 
-    // Smoothing
-    static constexpr int SAMPLE_COUNT = 10;
+    // Smoothing - use more samples and slower updates for stability
+    static constexpr int SAMPLE_COUNT = 20;
     float samples[SAMPLE_COUNT] = {};
     int sampleIndex = 0;
     bool samplesReady = false;

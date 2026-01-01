@@ -26,8 +26,8 @@ struct Schedule {
     void generateName();            // Auto-generate name from schedule properties
 };
 
-// WiFi Schedule structure (time windows when WiFi is available)
-struct WifiSchedule {
+// BLE Schedule structure (time windows when BLE advertising is active)
+struct BleSchedule {
     uint16_t id;                    // Unique ID
     char name[32];                  // Display name
     uint8_t startHour;              // Start time hour (0-23)
@@ -114,19 +114,19 @@ public:
     // daysAway: 0=today, 1=tomorrow, 2-6=day of week
     bool getNextRunTime(int& hour, int& minute, int& daysAway);
 
-    // WiFi Schedules
-    int getWifiScheduleCount() const { return wifiScheduleCount; }
-    WifiSchedule* getWifiSchedule(int index);
-    WifiSchedule* getWifiScheduleById(uint16_t id);
-    bool addWifiSchedule(const WifiSchedule& schedule);
-    bool updateWifiSchedule(uint16_t id, const WifiSchedule& schedule);
-    bool deleteWifiSchedule(uint16_t id);
-    void saveWifiSchedules();
-    void loadWifiSchedules();
-    String getWifiSchedulesJson();
+    // BLE Schedules
+    int getBleScheduleCount() const { return bleScheduleCount; }
+    BleSchedule* getBleSchedule(int index);
+    BleSchedule* getBleScheduleById(uint16_t id);
+    bool addBleSchedule(const BleSchedule& schedule);
+    bool updateBleSchedule(uint16_t id, const BleSchedule& schedule);
+    bool deleteBleSchedule(uint16_t id);
+    void saveBleSchedules();
+    void loadBleSchedules();
+    String getBleSchedulesJson();
 
-    // Check if WiFi should be active now based on schedules
-    bool shouldWifiBeActive();
+    // Check if BLE should be active now based on schedules
+    bool shouldBleBeActive();
 
     // Reset all settings and schedules to defaults
     void resetToDefaults();
@@ -141,10 +141,10 @@ private:
     int scheduleCount = 0;
     uint16_t nextScheduleId = 1;
 
-    static constexpr int MAX_WIFI_SCHEDULES = 8;
-    WifiSchedule wifiSchedules[MAX_WIFI_SCHEDULES];
-    int wifiScheduleCount = 0;
-    uint16_t nextWifiScheduleId = 1;
+    static constexpr int MAX_BLE_SCHEDULES = 8;
+    BleSchedule bleSchedules[MAX_BLE_SCHEDULES];
+    int bleScheduleCount = 0;
+    uint16_t nextBleScheduleId = 1;
 
     void generateDeviceId();
     void initDefaultSettings();

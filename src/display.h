@@ -1,49 +1,53 @@
 #pragma once
 
 #include <Arduino.h>
-#include <TFT_eSPI.h>
+#include <GxEPD2_BW.h>
+#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSans12pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeMono9pt7b.h>
 #include "config.h"
 #include "buttons.h"
 
-// UI Screen states
+// Display type for 2.9" Waveshare (296x128)
+// Using GxEPD2_290_T94_V2 which is compatible with most 2.9" black/white displays
+typedef GxEPD2_BW<GxEPD2_290_T94_V2, GxEPD2_290_T94_V2::HEIGHT> EPD_Class;
+
+// UI Screen states (simplified - read-only except WiFi toggle)
 enum class Screen {
-    OVERVIEW,
-    SCHEDULES,
-    SCHEDULE_EDIT,
-    SETTINGS,
-    SETTINGS_EDIT,
-    TIME_EDIT,
-    DATE_EDIT,
-    CONNECTIVITY,
-    WIFI_SCHEDULES,
-    WIFI_SCHEDULE_EDIT,
-    ABOUT,
-    CONFIRM_RESET,
-    THROW_CONFIRM
+    OVERVIEW,       // Time, battery, next feed, warnings
+    SCHEDULES,      // Read-only feed schedule list
+    CONNECTIVITY,   // WiFi/BLE status, QR code, toggle WiFi
+    SETTINGS,       // Read-only settings display
+    ABOUT           // Version, device ID
 };
 
-// Colors
-namespace Colors {
-    constexpr uint16_t BACKGROUND = TFT_BLACK;
-    constexpr uint16_t TEXT = TFT_WHITE;
-    constexpr uint16_t TEXT_DIM = TFT_DARKGREY;
-    constexpr uint16_t ACCENT = TFT_CYAN;
-    constexpr uint16_t SUCCESS = TFT_GREEN;
-    constexpr uint16_t WARNING = TFT_YELLOW;
-    constexpr uint16_t DANGER = TFT_RED;
-    constexpr uint16_t HEADER_BG = 0x1082;  // Dark blue-grey
-}
-
-// Forward declarations for data types (will be defined in other modules)
+// Status data passed to display
 struct StatusData {
+    // Time
+    char currentTime[8];        // "HH:MM:SS" or "HH:MM"
+    char currentDate[16];       // "Mon Jan 01"
+
+    // Battery
     float batteryVoltage;
     bool isCharging;
-    const char* batteryStatus;  // "Good", "Okay", "Low"
-    char nextFeedTime[16];      // "Today 07:00" or "Mon 07:00"
-    char currentTime[6];        // "HH:MM"
-    char currentDate[12];       // "Mon DD YYYY"
-    bool wifiConnected;
+    const char* batteryStatus;  // "Good", "Okay", "Low", "Critical"
+
+    // Next feed
+    char nextFeedTime[20];      // "Today 07:00" or "Mon 07:00" or "None"
+
+    // Status flags
+    bool wifiEnabled;
+    bool wifiClientConnected;
+    bool bleEnabled;
+    bool bleClientConnected;
     bool vacationMode;
+    bool timeSynced;
+
+    // WiFi info (for connectivity screen)
+    char wifiSSID[32];
+    char wifiPassword[16];
 };
 
 class Display {
@@ -59,84 +63,49 @@ public:
     // Force redraw on next update
     void invalidate() { needsRedraw = true; }
 
-    // Backlight control
-    void setBacklight(bool on);
-    bool isBacklightOn() const { return backlightOn; }
+    // Update status data
+    void setStatus(const StatusData& newStatus);
 
-    // Update status data for home screen
-    void setStatus(const StatusData& status);
-
-    // Set pairing info
-    void setPairingInfo(const char* ssid, const char* password);
+    // Request WiFi toggle (called from button handler, returns true if toggled)
+    bool shouldToggleWifi() const { return wifiToggleRequested; }
+    void clearWifiToggleRequest() { wifiToggleRequested = false; }
 
 private:
-    TFT_eSPI tft = TFT_eSPI();
+    EPD_Class epd = EPD_Class(GxEPD2_290_T94_V2(PIN_EPD_CS, PIN_EPD_DC, PIN_EPD_RST, PIN_EPD_BUSY));
+
     Screen currentScreen = Screen::OVERVIEW;
-    Screen previousScreen = Screen::OVERVIEW;
     bool needsRedraw = true;
-    bool backlightOn = true;
+    bool wifiToggleRequested = false;
 
-    // Status data cache
-    StatusData status = {};
-    char pairingSSID[32] = "";
-    char pairingPassword[32] = "";
+    // Partial refresh counter - do full refresh periodically
+    uint8_t partialRefreshCount = 0;
 
-    // UI state
-    int menuIndex = 0;
+    // Scroll state for list screens
     int scrollOffset = 0;
-    bool selectionMode = false;    // True when caret is shown for item selection
-    int editValue = 0;             // Temporary value during editing
-    int editField = 0;             // Which field is being edited (for multi-field screens)
+    bool scrollMode = false;
 
-    // Time/date edit state
-    int editHour = 0;
-    int editMinute = 0;
-    int editMonth = 1;
-    int editDay = 1;
-    int editYear = 2025;
+    // Cached status data
+    StatusData status = {};
 
-    // Schedule edit state
-    int editScheduleIndex = -1;     // Which schedule we're editing
-    uint8_t editDays = 0x7F;        // Day bitmask
-    uint8_t editDuration = 0;       // 0 = use default
-    bool editEnabled = true;
-    int editSubField = 0;           // Sub-field for time editing (0=hour, 1=minute)
-    bool editingField = false;      // True when actively editing a field's value
-
-    // WiFi schedule edit state
-    int editWifiScheduleIndex = -1;
-    uint8_t editStartHour = 6;
-    uint8_t editStartMinute = 0;
-    uint8_t editEndHour = 8;
-    uint8_t editEndMinute = 0;
-
-    // Rendering methods
-    void drawHeader(const char* title);
+    // Drawing methods for each screen
     void drawOverviewScreen();
     void drawSchedulesScreen();
-    void drawScheduleEditScreen();
-    void drawSettingsScreen();
-    void drawSettingsEditScreen();
-    void drawTimeEditScreen();
-    void drawDateEditScreen();
     void drawConnectivityScreen();
-    void drawWifiSchedulesScreen();
-    void drawWifiScheduleEditScreen();
+    void drawSettingsScreen();
     void drawAboutScreen();
-    void drawConfirmResetScreen();
-    void drawThrowConfirmScreen();
 
-    // Overview screen elements
-    void drawBatteryIndicator(int x, int y);
-    void drawConnectionStatus(int x, int y);
+    // Helper drawing methods
+    void drawHeader(const char* title);
+    void drawBatteryIcon(int16_t x, int16_t y);
+    void drawWifiIcon(int16_t x, int16_t y, bool enabled, bool connected);
+    void drawBleIcon(int16_t x, int16_t y, bool enabled, bool connected);
+    void drawWarningBanner(const char* message);
+    void drawScrollIndicator(int currentItem, int totalItems);
+    void drawQRCode(int16_t x, int16_t y, const char* data, int size);
 
-    // Navigation helpers
-    void drawNavCarets();
-    void drawMenuItem(int y, const char* label, const char* value, bool selected);
-
-    // Helper methods
-    void clearContent();
-    uint16_t getBatteryColor() const;
+    // Refresh helpers
+    void doFullRefresh();
+    void doPartialRefresh();
 };
 
 extern Display display;
