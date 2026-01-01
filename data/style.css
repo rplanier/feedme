@@ -160,6 +160,30 @@ nav {
     color: var(--warning);
 }
 
+.banner.info {
+    background: rgba(15, 150, 156, 0.2);
+    color: var(--accent-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.banner.error {
+    background: rgba(244, 67, 54, 0.2);
+    color: var(--danger);
+}
+
+.btn-small {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: white;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
 /* Buttons */
 .action-btn {
     width: 100%;
@@ -506,6 +530,28 @@ nav {
         opacity: 1;
         transform: translateX(-50%) translateY(0);
     }
+}
+
+/* Compact modal for confirmations */
+.modal-compact {
+    max-height: auto;
+    border-radius: var(--radius);
+    margin: 16px;
+}
+
+/* Center compact modals */
+.modal:has(.modal-compact) {
+    align-items: center;
+}
+
+.modal-compact .modal-body {
+    text-align: center;
+    padding: 24px 20px;
+}
+
+.confirm-text {
+    font-size: 18px;
+    color: var(--text);
 }
 
 /* Hidden utility */
