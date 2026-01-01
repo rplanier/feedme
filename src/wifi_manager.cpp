@@ -41,22 +41,16 @@ void WiFiManager::update() {
         dnsServer->processNextRequest();
     }
 
-    // Update client count
+    // Update client count (for informational purposes)
     int currentClients = WiFi.softAPgetStationNum();
     if (currentClients != clientCount) {
         clientCount = currentClients;
         Serial.printf("WiFi: %d client(s) connected\n", clientCount);
     }
 
-    // Track idle state (no WiFi clients)
-    if (clientCount > 0) {
-        // Clients connected, reset idle timer
-        resetIdleTimer();
-    } else if (idleStartTime == 0) {
-        // Just became idle, start the timer
-        idleStartTime = millis();
-        Serial.println("WiFi: No clients, starting idle timer");
-    }
+    // Idle timer is now controlled by heartbeat from web UI
+    // Timer starts when WiFi starts (in start()) and resets on heartbeat
+    // This allows countdown to work properly in the web interface
 }
 
 void WiFiManager::start() {
@@ -66,8 +60,8 @@ void WiFiManager::start() {
 
     setupAP();
     wifiRunning = true;
-    resetIdleTimer();
-    Serial.println("WiFi: AP started");
+    idleStartTime = millis();  // Start the idle timer
+    Serial.println("WiFi: AP started, idle timer started");
 }
 
 void WiFiManager::stop() {
@@ -82,29 +76,44 @@ void WiFiManager::stop() {
 }
 
 uint32_t WiFiManager::getIdleTime() const {
-    if (!wifiRunning || idleStartTime == 0) {
+    if (!wifiRunning) {
         return 0;
     }
     return millis() - idleStartTime;
 }
 
 bool WiFiManager::shouldAutoStop() const {
-    if (!wifiRunning || idleStartTime == 0) {
+    if (!wifiRunning) {
         return false;
     }
     return (millis() - idleStartTime) >= WIFI_IDLE_TIMEOUT_MS;
 }
 
+uint32_t WiFiManager::getRemainingIdleSeconds() const {
+    if (!wifiRunning) {
+        return 0;
+    }
+
+    uint32_t elapsed = millis() - idleStartTime;
+    if (elapsed >= WIFI_IDLE_TIMEOUT_MS) {
+        return 0;
+    }
+
+    return (WIFI_IDLE_TIMEOUT_MS - elapsed) / 1000;
+}
+
 void WiFiManager::resetIdleTimer() {
-    idleStartTime = 0;
+    idleStartTime = millis();
 }
 
 void WiFiManager::setupAP() {
     // Configure AP
     WiFi.mode(WIFI_AP);
 
-    // Configure AP with explicit settings for better iOS compatibility
-    // Channel 1, no hidden SSID, max 4 connections
+    // Set maximum TX power for better range
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+
+    // Start AP - channel 1, not hidden, max 4 connections
     bool success = WiFi.softAP(ssid, password, 1, false, 4);
 
     if (!success) {
@@ -112,10 +121,10 @@ void WiFiManager::setupAP() {
         return;
     }
 
-    // Longer delay for AP to fully initialize
+    // Delay for AP to initialize
     delay(500);
 
-    // Configure AP IP settings
+    // Configure AP IP settings after AP is started
     IPAddress localIP(192, 168, 4, 1);
     IPAddress gateway(192, 168, 4, 1);
     IPAddress subnet(255, 255, 255, 0);

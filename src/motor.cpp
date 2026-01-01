@@ -106,7 +106,9 @@ void Motor::setDefaultDuration(uint8_t durationSec) {
 }
 
 void Motor::activateMotor() {
-    digitalWrite(PIN_MOTOR_RELAY, MOTOR_INVERTED ? LOW : HIGH);
+    bool pinState = MOTOR_INVERTED ? LOW : HIGH;
+    Serial.printf("Motor: Activating - setting GPIO %d to %s\n", PIN_MOTOR_RELAY, pinState ? "HIGH" : "LOW");
+    digitalWrite(PIN_MOTOR_RELAY, pinState);
 }
 
 void Motor::deactivateMotor() {

@@ -22,8 +22,8 @@ public:
 
     bool isRunning() const { return running; }
 
-    // Update last activity timestamp (called on any request)
-    void recordActivity() { lastActivityTime = millis(); }
+    // Update last activity timestamp and reset WiFi idle timer
+    void recordActivity();
     uint32_t getLastActivityTime() const { return lastActivityTime; }
 
     // Set callbacks

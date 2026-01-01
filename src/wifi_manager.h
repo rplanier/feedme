@@ -21,6 +21,12 @@ public:
     // Check if WiFi should auto-stop due to idle timeout
     bool shouldAutoStop() const;
 
+    // Get remaining seconds before WiFi auto-stops
+    uint32_t getRemainingIdleSeconds() const;
+
+    // Reset idle timer (call when there's activity)
+    void resetIdleTimer();
+
     // Get network info
     const char* getSSID() const { return ssid; }
     const char* getPassword() const { return password; }
@@ -39,7 +45,6 @@ private:
 
     void setupAP();
     void stopAP();
-    void resetIdleTimer();
 };
 
 extern WiFiManager wifiManager;

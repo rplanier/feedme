@@ -2,9 +2,16 @@
 #include "storage.h"
 #include "motor.h"
 #include "battery.h"
+#include "wifi_manager.h"
 #include "config.h"
+#include "rtc_manager.h"
 
 WebServer webServer;
+
+void WebServer::recordActivity() {
+    lastActivityTime = millis();
+    wifiManager.resetIdleTimer();  // Any API activity resets WiFi timeout
+}
 
 void WebServer::begin() {
     if (running) {
@@ -78,12 +85,49 @@ void WebServer::setupAPI() {
         handleGetSchedules(request);
     });
 
+    // POST /api/schedules/update - Update schedule
+    server->on("/api/schedules/update", HTTP_POST,
+        [](AsyncWebServerRequest* request) {},
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0) {
+                recordActivity();
+                if (request->hasParam("id")) {
+                    uint16_t id = request->getParam("id")->value().toInt();
+                    Serial.printf("WebServer: Updating schedule ID %d\n", id);
+                    handleUpdateSchedule(request, data, len, id);
+                } else {
+                    sendError(request, 400, "Missing schedule ID");
+                }
+            }
+        }
+    );
+
+    // POST /api/schedules/delete - Delete schedule
+    server->on("/api/schedules/delete", HTTP_POST,
+        [](AsyncWebServerRequest* request) {},
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0) {
+                recordActivity();
+                if (request->hasParam("id")) {
+                    uint16_t id = request->getParam("id")->value().toInt();
+                    Serial.printf("WebServer: Deleting schedule ID %d\n", id);
+                    handleDeleteSchedule(request, id);
+                } else {
+                    sendError(request, 400, "Missing schedule ID");
+                }
+            }
+        }
+    );
+
     // POST /api/schedules - Create new schedule
     server->on("/api/schedules", HTTP_POST,
         [](AsyncWebServerRequest* request) {},
         nullptr,
         [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
             if (index == 0) {
+                Serial.println("WebServer: Creating new schedule");
                 handleCreateSchedule(request, data, len);
             }
         }
@@ -92,6 +136,12 @@ void WebServer::setupAPI() {
     // POST /api/throw
     server->on("/api/throw", HTTP_POST, [this](AsyncWebServerRequest* request) {
         handleThrow(request);
+    });
+
+    // GET /api/heartbeat - Keep WiFi alive (recordActivity already resets timer)
+    server->on("/api/heartbeat", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        recordActivity();
+        request->send(200, "application/json", "{\"ok\":true}");
     });
 
     // POST /api/time
@@ -132,75 +182,15 @@ void WebServer::setupAPI() {
         }
     );
 
-    // PUT /api/schedules/:id - handled via query param as POST
-    server->on("/api/schedules/update", HTTP_POST,
-        [](AsyncWebServerRequest* request) {},
-        nullptr,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (index == 0) {
-                recordActivity();
-                if (request->hasParam("id")) {
-                    uint16_t id = request->getParam("id")->value().toInt();
-                    handleUpdateSchedule(request, data, len, id);
-                } else {
-                    sendError(request, 400, "Missing schedule ID");
-                }
-            }
-        }
-    );
-
-    // DELETE /api/schedules/:id - handled via query param
-    server->on("/api/schedules/delete", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    // GET /api/ble-schedules
+    server->on("/api/ble-schedules", HTTP_GET, [this](AsyncWebServerRequest* request) {
         recordActivity();
-        if (request->hasParam("id")) {
-            uint16_t id = request->getParam("id")->value().toInt();
-            handleDeleteSchedule(request, id);
-        } else {
-            sendError(request, 400, "Missing schedule ID");
-        }
-    });
-
-    // GET /api/wifi-schedules
-    server->on("/api/wifi-schedules", HTTP_GET, [this](AsyncWebServerRequest* request) {
-        recordActivity();
-        String json = storage.getWifiSchedulesJson();
+        String json = storage.getBleSchedulesJson();
         sendJson(request, 200, json);
     });
 
-    // POST /api/wifi-schedules - Create new WiFi schedule
-    server->on("/api/wifi-schedules", HTTP_POST,
-        [](AsyncWebServerRequest* request) {},
-        nullptr,
-        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-            if (index == 0) {
-                recordActivity();
-                JsonDocument doc;
-                DeserializationError error = deserializeJson(doc, data, len);
-                if (error) {
-                    sendError(request, 400, "Invalid JSON");
-                    return;
-                }
-
-                WifiSchedule schedule = {};
-                strlcpy(schedule.name, doc["name"] | "WiFi Window", sizeof(schedule.name));
-                schedule.startHour = doc["startHour"] | 6;
-                schedule.startMinute = doc["startMinute"] | 0;
-                schedule.endHour = doc["endHour"] | 8;
-                schedule.endMinute = doc["endMinute"] | 0;
-                schedule.days = doc["days"] | 0x7F;
-                schedule.enabled = doc["enabled"] | true;
-
-                if (storage.addWifiSchedule(schedule)) {
-                    sendJson(request, 201, "{\"success\":true}");
-                } else {
-                    sendError(request, 500, "Failed to add WiFi schedule");
-                }
-            }
-        }
-    );
-
-    // POST /api/wifi-schedules/update - Update WiFi schedule
-    server->on("/api/wifi-schedules/update", HTTP_POST,
+    // POST /api/ble-schedules/update - Update BLE schedule
+    server->on("/api/ble-schedules/update", HTTP_POST,
         [](AsyncWebServerRequest* request) {},
         nullptr,
         [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
@@ -211,6 +201,7 @@ void WebServer::setupAPI() {
                     return;
                 }
                 uint16_t id = request->getParam("id")->value().toInt();
+                Serial.printf("WebServer: Updating BLE schedule ID %d\n", id);
 
                 JsonDocument doc;
                 DeserializationError error = deserializeJson(doc, data, len);
@@ -219,13 +210,13 @@ void WebServer::setupAPI() {
                     return;
                 }
 
-                WifiSchedule* existing = storage.getWifiScheduleById(id);
+                BleSchedule* existing = storage.getBleScheduleById(id);
                 if (!existing) {
-                    sendError(request, 404, "WiFi schedule not found");
+                    sendError(request, 404, "BLE schedule not found");
                     return;
                 }
 
-                WifiSchedule schedule = *existing;
+                BleSchedule schedule = *existing;
                 if (doc.containsKey("name")) strlcpy(schedule.name, doc["name"], sizeof(schedule.name));
                 if (doc.containsKey("startHour")) schedule.startHour = doc["startHour"];
                 if (doc.containsKey("startMinute")) schedule.startMinute = doc["startMinute"];
@@ -234,29 +225,69 @@ void WebServer::setupAPI() {
                 if (doc.containsKey("days")) schedule.days = doc["days"];
                 if (doc.containsKey("enabled")) schedule.enabled = doc["enabled"];
 
-                if (storage.updateWifiSchedule(id, schedule)) {
+                if (storage.updateBleSchedule(id, schedule)) {
                     sendJson(request, 200, "{\"success\":true}");
                 } else {
-                    sendError(request, 500, "Failed to update WiFi schedule");
+                    sendError(request, 500, "Failed to update BLE schedule");
                 }
             }
         }
     );
 
-    // POST /api/wifi-schedules/delete - Delete WiFi schedule
-    server->on("/api/wifi-schedules/delete", HTTP_POST, [this](AsyncWebServerRequest* request) {
-        recordActivity();
-        if (request->hasParam("id")) {
-            uint16_t id = request->getParam("id")->value().toInt();
-            if (storage.deleteWifiSchedule(id)) {
-                sendJson(request, 200, "{\"success\":true}");
-            } else {
-                sendError(request, 404, "WiFi schedule not found");
+    // POST /api/ble-schedules/delete - Delete BLE schedule
+    server->on("/api/ble-schedules/delete", HTTP_POST,
+        [](AsyncWebServerRequest* request) {},
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0) {
+                recordActivity();
+                if (request->hasParam("id")) {
+                    uint16_t id = request->getParam("id")->value().toInt();
+                    Serial.printf("WebServer: Deleting BLE schedule ID %d\n", id);
+                    if (storage.deleteBleSchedule(id)) {
+                        sendJson(request, 200, "{\"success\":true}");
+                    } else {
+                        sendError(request, 404, "BLE schedule not found");
+                    }
+                } else {
+                    sendError(request, 400, "Missing schedule ID");
+                }
             }
-        } else {
-            sendError(request, 400, "Missing schedule ID");
         }
-    });
+    );
+
+    // POST /api/ble-schedules - Create new BLE schedule (must be AFTER specific routes)
+    server->on("/api/ble-schedules", HTTP_POST,
+        [](AsyncWebServerRequest* request) {},
+        nullptr,
+        [this](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (index == 0) {
+                recordActivity();
+                Serial.println("WebServer: Creating new BLE schedule");
+                JsonDocument doc;
+                DeserializationError error = deserializeJson(doc, data, len);
+                if (error) {
+                    sendError(request, 400, "Invalid JSON");
+                    return;
+                }
+
+                BleSchedule schedule = {};
+                strlcpy(schedule.name, doc["name"] | "BLE Window", sizeof(schedule.name));
+                schedule.startHour = doc["startHour"] | 4;
+                schedule.startMinute = doc["startMinute"] | 0;
+                schedule.endHour = doc["endHour"] | 20;
+                schedule.endMinute = doc["endMinute"] | 0;
+                schedule.days = doc["days"] | 0x7F;
+                schedule.enabled = doc["enabled"] | true;
+
+                if (storage.addBleSchedule(schedule)) {
+                    sendJson(request, 201, "{\"success\":true}");
+                } else {
+                    sendError(request, 500, "Failed to add BLE schedule");
+                }
+            }
+        }
+    );
 }
 
 void WebServer::handleGetStatus(AsyncWebServerRequest* request) {
@@ -270,35 +301,42 @@ void WebServer::handleGetStatus(AsyncWebServerRequest* request) {
     doc["vacationMode"] = storage.getSettings().vacationMode;
     doc["motorRunning"] = motor.isRunning();
     doc["deviceId"] = storage.getDeviceId();
+    doc["timeSynced"] = rtcManager.isTimeSynced();
 
-    // Current time
-    struct tm timeinfo;
-    if (getLocalTime(&timeinfo)) {
-        char timeStr[32];
-        strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%S", &timeinfo);
-        doc["currentTime"] = timeStr;
-    } else {
-        doc["currentTime"] = nullptr;
-    }
+    // Current time from RTC manager
+    DateTime now = rtcManager.now();
+    char timeStr[32];
+    snprintf(timeStr, sizeof(timeStr), "%04d-%02d-%02dT%02d:%02d:%02d",
+             now.year(), now.month(), now.day(),
+             now.hour(), now.minute(), now.second());
+    doc["currentTime"] = timeStr;
 
-    // Next feed time
-    int nextHour, nextMinute, daysAway;
-    if (storage.getNextRunTime(nextHour, nextMinute, daysAway)) {
-        char nextFeedStr[32];
-        static const char* dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    // Next feed time (only if time is synced)
+    if (rtcManager.isTimeSynced()) {
+        int nextHour, nextMinute, daysAway;
+        if (storage.getNextRunTime(nextHour, nextMinute, daysAway)) {
+            char nextFeedStr[32];
+            static const char* dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
-        if (daysAway == 0) {
-            snprintf(nextFeedStr, sizeof(nextFeedStr), "Today %02d:%02d", nextHour, nextMinute);
-        } else if (daysAway == 1) {
-            snprintf(nextFeedStr, sizeof(nextFeedStr), "Tomorrow %02d:%02d", nextHour, nextMinute);
+            if (daysAway == 0) {
+                snprintf(nextFeedStr, sizeof(nextFeedStr), "Today %02d:%02d", nextHour, nextMinute);
+            } else if (daysAway == 1) {
+                snprintf(nextFeedStr, sizeof(nextFeedStr), "Tomorrow %02d:%02d", nextHour, nextMinute);
+            } else {
+                int nextDayOfWeek = (now.dayOfTheWeek() + daysAway) % 7;
+                snprintf(nextFeedStr, sizeof(nextFeedStr), "%s %02d:%02d", dayNames[nextDayOfWeek], nextHour, nextMinute);
+            }
+            doc["nextFeed"] = nextFeedStr;
         } else {
-            int nextDayOfWeek = (timeinfo.tm_wday + daysAway) % 7;
-            snprintf(nextFeedStr, sizeof(nextFeedStr), "%s %02d:%02d", dayNames[nextDayOfWeek], nextHour, nextMinute);
+            doc["nextFeed"] = nullptr;
         }
-        doc["nextFeed"] = nextFeedStr;
     } else {
         doc["nextFeed"] = nullptr;
     }
+
+    // WiFi timeout info for heartbeat UI
+    doc["wifiTimeoutSeconds"] = WIFI_IDLE_TIMEOUT_MS / 1000;
+    doc["wifiRemainingSeconds"] = wifiManager.getRemainingIdleSeconds();
 
     String response;
     serializeJson(doc, response);
@@ -436,11 +474,8 @@ void WebServer::handleTimeSync(AsyncWebServerRequest* request, uint8_t* data, si
         timeUpdateCallback(epoch);
     }
 
-    // Set system time
-    struct timeval tv;
-    tv.tv_sec = epoch;
-    tv.tv_usec = 0;
-    settimeofday(&tv, nullptr);
+    // Set time via RTC manager (also marks time as synced)
+    rtcManager.setTime(epoch);
 
     Serial.printf("WebServer: Time synced to epoch %lu (local)\n", epoch);
     sendJson(request, 200, "{\"success\":true}");
