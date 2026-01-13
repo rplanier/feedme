@@ -5,12 +5,13 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include "config.h"
+#include "schedule_manager.h"
 
 // Schedule structure
 struct Schedule {
     uint16_t id;                    // Unique ID
     char name[48];                  // Display name (auto-generated or custom)
-    uint8_t hour;                   // 0-23
+    uint8_t hour;                   // 0-23 (stored as UTC)
     uint8_t minute;                 // 0-59
     uint8_t days;                   // Bitmask: bit 0 = Sun, bit 1 = Mon, ... bit 6 = Sat
     int16_t startMonth;             // 1-12, or -1 for no start date
@@ -23,16 +24,30 @@ struct Schedule {
     // Helper methods
     bool isActiveOnDay(uint8_t dayOfWeek) const;  // 0 = Sunday
     bool isActiveOnDate(int month, int day) const;
-    void generateName();            // Auto-generate name from schedule properties
+    void generateName(int16_t tzOffset);  // Auto-generate name from schedule properties (uses local time)
+
+    // UTC/Local time conversion helpers
+    // tzOffset is minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
+    uint8_t getLocalHour(int16_t tzOffset) const {
+        // Convert UTC hour to local: local = UTC - offset/60
+        int localHour = hour - (tzOffset / 60);
+        return (localHour + 24) % 24;
+    }
+
+    static uint8_t toUtcHour(uint8_t localHour, int16_t tzOffset) {
+        // Convert local hour to UTC: UTC = local + offset/60
+        int utcHour = localHour + (tzOffset / 60);
+        return (utcHour + 24) % 24;
+    }
 };
 
 // BLE Schedule structure (time windows when BLE advertising is active)
 struct BleSchedule {
     uint16_t id;                    // Unique ID
     char name[32];                  // Display name
-    uint8_t startHour;              // Start time hour (0-23)
+    uint8_t startHour;              // Start time hour (0-23, stored as UTC)
     uint8_t startMinute;            // Start time minute (0-59)
-    uint8_t endHour;                // End time hour (0-23)
+    uint8_t endHour;                // End time hour (0-23, stored as UTC)
     uint8_t endMinute;              // End time minute (0-59)
     uint8_t days;                   // Bitmask: bit 0 = Sun, bit 1 = Mon, ... bit 6 = Sat
     bool enabled;
@@ -40,32 +55,42 @@ struct BleSchedule {
     // Helper methods
     bool isActiveOnDay(uint8_t dayOfWeek) const;  // 0 = Sunday
     bool isActiveNow(int hour, int minute, int dayOfWeek) const;
+
+    // UTC/Local time conversion helpers
+    uint8_t getLocalStartHour(int16_t tzOffset) const {
+        int localHour = startHour - (tzOffset / 60);
+        return (localHour + 24) % 24;
+    }
+
+    uint8_t getLocalEndHour(int16_t tzOffset) const {
+        int localHour = endHour - (tzOffset / 60);
+        return (localHour + 24) % 24;
+    }
+
+    static uint8_t toUtcHour(uint8_t localHour, int16_t tzOffset) {
+        int utcHour = localHour + (tzOffset / 60);
+        return (utcHour + 24) % 24;
+    }
 };
+
+// Feed event history entry
+struct FeedEvent {
+    uint32_t timestamp;             // Unix epoch time
+    uint8_t duration;               // Duration in seconds
+    bool manual;                    // true = Feed Now/display, false = scheduled
+    char scheduleName[24];          // Schedule name (empty if manual)
+};
+
+constexpr int MAX_FEED_HISTORY = 20;
 
 // Settings structure
 struct Settings {
     char deviceId[5];               // 4-digit ID + null
     uint8_t motorDuration;          // Default motor duration in seconds
     bool vacationMode;
-    BatteryType batteryType;        // SLA, AGM, or GEL
     SleepTimeout sleepTimeout;      // Display/sleep timeout
-
-    // Get critical voltage threshold based on battery type
-    float getCriticalVoltage() const {
-        switch (batteryType) {
-            case BatteryType::AGM: return BATTERY_CRITICAL_AGM;
-            case BatteryType::GEL: return BATTERY_CRITICAL_GEL;
-            default: return BATTERY_CRITICAL_SLA;
-        }
-    }
-
-    const char* getBatteryTypeName() const {
-        switch (batteryType) {
-            case BatteryType::AGM: return "AGM";
-            case BatteryType::GEL: return "Gel";
-            default: return "SLA";
-        }
-    }
+    int16_t timezoneOffset;         // Minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
+    BatteryType batteryType;        // Battery chemistry (SLA/AGM/GEL) for accurate state-of-charge
 
     uint16_t getSleepTimeoutSeconds() const {
         return ::getSleepTimeoutSeconds(sleepTimeout);
@@ -97,7 +122,7 @@ public:
     void loadSettings();
 
     // Schedules
-    int getScheduleCount() const { return scheduleCount; }
+    int getScheduleCount() const { return feedSchedules.getCount(); }
     Schedule* getSchedule(int index);
     Schedule* getScheduleById(uint16_t id);
     bool addSchedule(const Schedule& schedule);
@@ -115,7 +140,7 @@ public:
     bool getNextRunTime(int& hour, int& minute, int& daysAway);
 
     // BLE Schedules
-    int getBleScheduleCount() const { return bleScheduleCount; }
+    int getBleScheduleCount() const { return bleSchedules.getCount(); }
     BleSchedule* getBleSchedule(int index);
     BleSchedule* getBleScheduleById(uint16_t id);
     bool addBleSchedule(const BleSchedule& schedule);
@@ -128,6 +153,12 @@ public:
     // Check if BLE should be active now based on schedules
     bool shouldBleBeActive();
 
+    // Feed history
+    void logFeedEvent(uint8_t duration, bool manual, const char* scheduleName);
+    int getFeedHistoryCount() const { return feedHistoryCount; }
+    const FeedEvent* getFeedEvent(int index) const;  // 0 = most recent
+    String getFeedHistoryJson();
+
     // Reset all settings and schedules to defaults
     void resetToDefaults();
 
@@ -137,17 +168,26 @@ private:
     char deviceId[5] = "";
 
     static constexpr int MAX_SCHEDULES = 32;
-    Schedule schedules[MAX_SCHEDULES];
-    int scheduleCount = 0;
-    uint16_t nextScheduleId = 1;
-
     static constexpr int MAX_BLE_SCHEDULES = 8;
-    BleSchedule bleSchedules[MAX_BLE_SCHEDULES];
-    int bleScheduleCount = 0;
-    uint16_t nextBleScheduleId = 1;
+
+    ScheduleManager<Schedule, MAX_SCHEDULES> feedSchedules;
+    ScheduleManager<BleSchedule, MAX_BLE_SCHEDULES> bleSchedules;
+
+    // Feed history (circular buffer, most recent first)
+    FeedEvent feedHistory[MAX_FEED_HISTORY];
+    int feedHistoryCount = 0;
+    int feedHistoryHead = 0;  // Index of most recent event
 
     void generateDeviceId();
+    void loadFeedHistory();
+    void saveFeedHistory();
     void initDefaultSettings();
+
+    // Serialization helpers for ScheduleManager
+    static void deserializeFeedSchedule(Schedule& s, JsonObject& obj);
+    static void serializeFeedSchedule(const Schedule& s, JsonObject& obj);
+    static void deserializeBleSchedule(BleSchedule& s, JsonObject& obj);
+    static void serializeBleSchedule(const BleSchedule& s, JsonObject& obj);
 };
 
 extern Storage storage;

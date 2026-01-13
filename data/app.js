@@ -27,6 +27,32 @@ let heartbeatInterval = null;
 let statusInterval = null;
 let wifiDisconnected = false;
 
+// Timezone conversion helpers
+// Note: getTimezoneOffset() returns positive for behind UTC (e.g., 360 for CST/UTC-6)
+function getTimezoneOffset() {
+    // Use stored offset from settings if available, otherwise use browser's offset
+    return settings.timezoneOffset ?? new Date().getTimezoneOffset();
+}
+
+function utcToLocalHour(utcHour) {
+    const offset = getTimezoneOffset();
+    // Local = UTC - offset/60 (offset is positive for behind UTC)
+    const localHour = utcHour - Math.floor(offset / 60);
+    return (localHour + 24) % 24;
+}
+
+function localToUtcHour(localHour) {
+    const offset = getTimezoneOffset();
+    // UTC = Local + offset/60
+    const utcHour = localHour + Math.floor(offset / 60);
+    return (utcHour + 24) % 24;
+}
+
+function formatTimeLocal(utcHour, minute) {
+    const localHour = utcToLocalHour(utcHour);
+    return String(localHour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+}
+
 // DOM Elements
 const elements = {
     appTitle: document.getElementById('app-title'),
@@ -42,6 +68,7 @@ const elements = {
     schedulesList: document.getElementById('schedules-list'),
     addScheduleBtn: document.getElementById('add-schedule-btn'),
     motorDuration: document.getElementById('motor-duration'),
+    batteryType: document.getElementById('battery-type'),
     vacationMode: document.getElementById('vacation-mode'),
     deviceId: document.getElementById('device-id'),
     saveSettingsBtn: document.getElementById('save-settings-btn'),
@@ -205,6 +232,27 @@ async function loadStatus() {
             warningBanner.classList.add('hidden');
         }
 
+        // Diagnostics
+        const diagUptime = document.getElementById('diag-uptime');
+        const diagHeap = document.getElementById('diag-heap');
+        const diagWifiClients = document.getElementById('diag-wifi-clients');
+        const diagResetReason = document.getElementById('diag-reset-reason');
+
+        if (diagUptime && status.uptime !== undefined) {
+            const hours = Math.floor(status.uptime / 3600);
+            const mins = Math.floor((status.uptime % 3600) / 60);
+            diagUptime.textContent = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        }
+        if (diagHeap && status.freeHeap !== undefined) {
+            diagHeap.textContent = `${Math.round(status.freeHeap / 1024)} KB`;
+        }
+        if (diagWifiClients && status.wifiClients !== undefined) {
+            diagWifiClients.textContent = status.wifiClients;
+        }
+        if (diagResetReason && status.lastResetReason) {
+            diagResetReason.textContent = status.lastResetReason;
+        }
+
         elements.connectionStatus.classList.add('connected');
     } catch (error) {
         console.error('Status load error:', error);
@@ -235,11 +283,12 @@ function renderSchedules() {
 
     elements.schedulesList.innerHTML = schedules.map(s => {
         const daysText = formatDays(s.days);
+        const localTime = formatTimeLocal(s.hour, s.minute);
         return `
             <div class="schedule-item ${s.enabled ? '' : 'disabled'}" data-id="${s.id}">
                 <div class="schedule-info">
                     <div class="schedule-name">${s.name || 'Schedule'}</div>
-                    <div class="schedule-details">${s.time} - ${daysText}</div>
+                    <div class="schedule-details">${localTime} - ${daysText}</div>
                 </div>
                 <label class="toggle schedule-toggle" onclick="event.stopPropagation()">
                     <input type="checkbox" ${s.enabled ? 'checked' : ''}
@@ -279,11 +328,55 @@ async function loadSettings() {
     try {
         settings = await API.get('/settings');
         elements.motorDuration.value = settings.motorDuration || 5;
+        elements.batteryType.value = settings.batteryType ?? 0;  // Default to SLA (0)
         elements.vacationMode.checked = settings.vacationMode || false;
         elements.deviceId.textContent = settings.deviceId || '----';
+        // Load feed history when settings are loaded
+        loadFeedHistory();
     } catch (error) {
         console.error('Settings load error:', error);
     }
+}
+
+async function loadFeedHistory() {
+    try {
+        const history = await API.get('/feed-history');
+        renderFeedHistory(history);
+    } catch (error) {
+        console.error('Feed history load error:', error);
+        const historyList = document.getElementById('feed-history-list');
+        if (historyList) {
+            historyList.innerHTML = '<div class="empty-state">Failed to load history</div>';
+        }
+    }
+}
+
+function renderFeedHistory(history) {
+    const historyList = document.getElementById('feed-history-list');
+    if (!historyList) return;
+
+    if (!history || history.length === 0) {
+        historyList.innerHTML = '<div class="empty-state">No feed history yet</div>';
+        return;
+    }
+
+    historyList.innerHTML = history.map(event => {
+        const date = new Date(event.timestamp * 1000);
+        const timeStr = date.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        const source = event.manual ? 'Manual' : (event.scheduleName || 'Schedule');
+        return `
+            <div class="history-item">
+                <span class="history-time">${timeStr}</span>
+                <span class="history-source">${source}</span>
+                <span class="history-duration">${event.duration}s</span>
+            </div>
+        `;
+    }).join('');
 }
 
 function openFeedModal() {
@@ -344,13 +437,14 @@ function syncTimeOnLoad() {
 
 async function handleSaveSettings() {
     try {
-        // Validate and clamp motor duration to 2-15 seconds
+        // Validate and clamp motor duration to 1-30 seconds
         let duration = parseInt(elements.motorDuration.value) || 5;
-        duration = Math.max(2, Math.min(15, duration));
+        duration = Math.max(1, Math.min(30, duration));
         elements.motorDuration.value = duration;  // Update UI to show clamped value
 
         const data = {
             motorDuration: duration,
+            batteryType: parseInt(elements.batteryType.value),
             vacationMode: elements.vacationMode.checked
         };
 
@@ -372,7 +466,9 @@ function openScheduleModal(schedule = null) {
     // Populate form - use settings.motorDuration as default for new schedules
     const defaultDuration = settings.motorDuration || 5;
     elements.scheduleName.value = schedule?.name || '';
-    elements.scheduleTime.value = schedule?.time || '06:00';
+    // Convert UTC time to local for display in time picker
+    const localTime = schedule ? formatTimeLocal(schedule.hour, schedule.minute) : '06:00';
+    elements.scheduleTime.value = localTime;
     elements.scheduleDuration.value = schedule?.duration || defaultDuration;
     elements.scheduleEnabled.checked = schedule?.enabled ?? true;
 
@@ -401,16 +497,18 @@ async function handleSaveSchedule() {
             }
         });
 
-        const [hours, minutes] = elements.scheduleTime.value.split(':').map(Number);
+        const [localHours, minutes] = elements.scheduleTime.value.split(':').map(Number);
+        // Convert local time to UTC for storage
+        const utcHours = localToUtcHour(localHours);
 
-        // Validate and clamp duration to 2-15 seconds
+        // Validate and clamp duration to 1-30 seconds
         const defaultDuration = settings.motorDuration || 5;
         let duration = parseInt(elements.scheduleDuration.value) || defaultDuration;
-        duration = Math.max(2, Math.min(15, duration));
+        duration = Math.max(1, Math.min(30, duration));
 
         const data = {
             name: elements.scheduleName.value || '',
-            hour: hours,
+            hour: utcHours,
             minute: minutes,
             days: days,
             duration: duration,
@@ -548,11 +646,13 @@ function renderBleSchedules() {
 
     elements.bleSchedulesList.innerHTML = bleSchedules.map(s => {
         const daysText = formatDays(s.days);
+        const localStartTime = formatTimeLocal(s.startHour, s.startMinute);
+        const localEndTime = formatTimeLocal(s.endHour, s.endMinute);
         return `
             <div class="schedule-item ${s.enabled ? '' : 'disabled'}" data-ble-id="${s.id}">
                 <div class="schedule-info">
                     <div class="schedule-name">${s.name || 'BLE Window'}</div>
-                    <div class="schedule-details">${s.startTime} - ${s.endTime} - ${daysText}</div>
+                    <div class="schedule-details">${localStartTime} - ${localEndTime} - ${daysText}</div>
                 </div>
                 <label class="toggle schedule-toggle" onclick="event.stopPropagation()">
                     <input type="checkbox" ${s.enabled ? 'checked' : ''}
@@ -581,8 +681,11 @@ function openBleScheduleModal(schedule = null) {
 
     // Populate form
     elements.bleScheduleName.value = schedule?.name || '';
-    elements.bleStartTime.value = schedule?.startTime || '06:00';
-    elements.bleEndTime.value = schedule?.endTime || '08:00';
+    // Convert UTC times to local for display in time pickers
+    const localStartTime = schedule ? formatTimeLocal(schedule.startHour, schedule.startMinute) : '06:00';
+    const localEndTime = schedule ? formatTimeLocal(schedule.endHour, schedule.endMinute) : '08:00';
+    elements.bleStartTime.value = localStartTime;
+    elements.bleEndTime.value = localEndTime;
     elements.bleScheduleEnabled.checked = schedule?.enabled ?? true;
 
     // Days checkboxes
@@ -610,14 +713,17 @@ async function handleSaveBleSchedule() {
             }
         });
 
-        const [startHours, startMinutes] = elements.bleStartTime.value.split(':').map(Number);
-        const [endHours, endMinutes] = elements.bleEndTime.value.split(':').map(Number);
+        const [localStartHours, startMinutes] = elements.bleStartTime.value.split(':').map(Number);
+        const [localEndHours, endMinutes] = elements.bleEndTime.value.split(':').map(Number);
+        // Convert local times to UTC for storage
+        const utcStartHours = localToUtcHour(localStartHours);
+        const utcEndHours = localToUtcHour(localEndHours);
 
         const data = {
             name: elements.bleScheduleName.value || 'BLE Window',
-            startHour: startHours,
+            startHour: utcStartHours,
             startMinute: startMinutes,
-            endHour: endHours,
+            endHour: utcEndHours,
             endMinute: endMinutes,
             days: days,
             enabled: elements.bleScheduleEnabled.checked

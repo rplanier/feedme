@@ -92,7 +92,19 @@
                 <h3>Motor</h3>
                 <div class="setting-row">
                     <label for="motor-duration">Default Duration (sec)</label>
-                    <input type="number" id="motor-duration" min="2" max="15" value="5">
+                    <input type="number" id="motor-duration" min="1" max="30" value="5">
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>Battery</h3>
+                <div class="setting-row">
+                    <label for="battery-type">Chemistry</label>
+                    <select id="battery-type">
+                        <option value="0">SLA (Sealed Lead Acid)</option>
+                        <option value="1">AGM (Absorbent Glass Mat)</option>
+                        <option value="2">GEL</option>
+                    </select>
                 </div>
             </div>
 
@@ -115,9 +127,36 @@
                 </div>
             </div>
 
+            <div class="settings-group">
+                <h3>Diagnostics</h3>
+                <div class="info-row">
+                    <span class="label">Uptime</span>
+                    <span id="diag-uptime" class="value">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">Free Memory</span>
+                    <span id="diag-heap" class="value">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">WiFi Clients</span>
+                    <span id="diag-wifi-clients" class="value">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="label">Last Reset</span>
+                    <span id="diag-reset-reason" class="value">--</span>
+                </div>
+            </div>
+
             <button id="save-settings-btn" class="action-btn primary">
                 Save Settings
             </button>
+
+            <div class="settings-group">
+                <h3>Feed History</h3>
+                <div id="feed-history-list" class="history-list">
+                    <div class="empty-state">Loading...</div>
+                </div>
+            </div>
         </main>
 
         <!-- Schedule Editor Modal -->
@@ -150,7 +189,7 @@
                     </div>
                     <div class="form-group">
                         <label for="schedule-duration">Duration (seconds)</label>
-                        <input type="number" id="schedule-duration" min="2" max="15" value="5">
+                        <input type="number" id="schedule-duration" min="1" max="30" value="5">
                     </div>
                     <div class="form-group toggle-row">
                         <label for="schedule-enabled">Enabled</label>

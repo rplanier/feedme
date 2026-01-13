@@ -26,6 +26,9 @@ public:
     void update();
     ButtonEvent getEvent();
 
+    // Check if any events are pending
+    bool hasEvent() const;
+
     // Direct state access if needed
 #if SINGLE_BUTTON_MODE
     bool isPrevPressed() const { return singleButton.isPressed; }
@@ -38,11 +41,21 @@ public:
 private:
 #if SINGLE_BUTTON_MODE
     ButtonState singleButton = {};
+    static void IRAM_ATTR buttonISR();
+    static volatile uint8_t isrPressCount;
 #else
     ButtonState prevButton = {};
     ButtonState nextButton = {};
+    static void IRAM_ATTR prevButtonISR();
+    static void IRAM_ATTR nextButtonISR();
+    static volatile uint8_t isrPrevPressCount;
+    static volatile uint8_t isrNextPressCount;
 #endif
-    ButtonEvent pendingEvent = ButtonEvent::NONE;
+
+    // Press counters for queueing
+    uint8_t nextPressCount = 0;
+    uint8_t prevPressCount = 0;
+    ButtonEvent pendingHoldEvent = ButtonEvent::NONE;
     uint32_t lastUpdateTime = 0;
 
     void updateButton(ButtonState& state, bool currentlyPressed,

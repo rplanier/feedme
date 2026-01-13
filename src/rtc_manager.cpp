@@ -142,20 +142,41 @@ void RTCManager::formatTime(char* buffer, size_t len) {
 }
 
 void RTCManager::formatDate(char* buffer, size_t len) {
-    static const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    static const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     DateTime dt = now();
-    snprintf(buffer, len, "%s %s %02d", days[dt.dayOfTheWeek()],
-             months[dt.month() - 1], dt.day());
+    snprintf(buffer, len, "%s %s %02d", DAY_NAMES[dt.dayOfTheWeek()],
+             MONTH_NAMES[dt.month() - 1], dt.day());
 }
 
 void RTCManager::formatDateTime(char* buffer, size_t len) {
-    static const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    static const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     DateTime dt = now();
     snprintf(buffer, len, "%s %s %02d %02d:%02d",
-             days[dt.dayOfTheWeek()], months[dt.month() - 1], dt.day(),
+             DAY_NAMES[dt.dayOfTheWeek()], MONTH_NAMES[dt.month() - 1], dt.day(),
+             dt.hour(), dt.minute());
+}
+
+// Local time formatting (with timezone offset conversion)
+
+DateTime RTCManager::nowLocal(int16_t tzOffset) {
+    DateTime utc = now();
+    // Local = UTC - offset (offset is positive for behind UTC)
+    int32_t localUnix = utc.unixtime() - (tzOffset * 60);
+    return DateTime(localUnix);
+}
+
+void RTCManager::formatTimeLocal(char* buffer, size_t len, int16_t tzOffset) {
+    DateTime dt = nowLocal(tzOffset);
+    snprintf(buffer, len, "%02d:%02d", dt.hour(), dt.minute());
+}
+
+void RTCManager::formatDateLocal(char* buffer, size_t len, int16_t tzOffset) {
+    DateTime dt = nowLocal(tzOffset);
+    snprintf(buffer, len, "%s %s %02d", DAY_NAMES[dt.dayOfTheWeek()],
+             MONTH_NAMES[dt.month() - 1], dt.day());
+}
+
+void RTCManager::formatDateTimeLocal(char* buffer, size_t len, int16_t tzOffset) {
+    DateTime dt = nowLocal(tzOffset);
+    snprintf(buffer, len, "%s %s %02d %02d:%02d",
+             DAY_NAMES[dt.dayOfTheWeek()], MONTH_NAMES[dt.month() - 1], dt.day(),
              dt.hour(), dt.minute());
 }

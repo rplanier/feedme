@@ -3,8 +3,65 @@
 
 Storage storage;
 
-// Day name abbreviations for auto-generated names
-static const char* DAY_ABBREV[] = {"Su", "M", "Tu", "W", "Th", "F", "Sa"};
+// =============================================================================
+// Serialization helpers for ScheduleManager
+// =============================================================================
+
+void Storage::deserializeFeedSchedule(Schedule& s, JsonObject& obj) {
+    s.id = obj["id"] | 0;
+    strlcpy(s.name, obj["name"] | "", sizeof(s.name));
+    s.hour = obj["hour"] | 6;
+    s.minute = obj["minute"] | 0;
+    s.days = obj["days"] | DAYS_ALL;
+    s.startMonth = obj["startMonth"] | -1;
+    s.startDay = obj["startDay"] | -1;
+    s.endMonth = obj["endMonth"] | -1;
+    s.endDay = obj["endDay"] | -1;
+    s.duration = obj["duration"] | 0;
+    s.enabled = obj["enabled"] | true;
+
+    // Name is generated when schedule is added/updated, not during deserialization
+}
+
+void Storage::serializeFeedSchedule(const Schedule& s, JsonObject& obj) {
+    obj["id"] = s.id;
+    obj["name"] = s.name;
+    obj["hour"] = s.hour;
+    obj["minute"] = s.minute;
+    obj["days"] = s.days;
+    obj["startMonth"] = s.startMonth;
+    obj["startDay"] = s.startDay;
+    obj["endMonth"] = s.endMonth;
+    obj["endDay"] = s.endDay;
+    obj["duration"] = s.duration;
+    obj["enabled"] = s.enabled;
+}
+
+void Storage::deserializeBleSchedule(BleSchedule& s, JsonObject& obj) {
+    s.id = obj["id"] | 0;
+    strlcpy(s.name, obj["name"] | "", sizeof(s.name));
+    s.startHour = obj["startHour"] | 4;
+    s.startMinute = obj["startMinute"] | 0;
+    s.endHour = obj["endHour"] | 20;
+    s.endMinute = obj["endMinute"] | 0;
+    s.days = obj["days"] | DAYS_ALL;
+    s.enabled = obj["enabled"] | true;
+}
+
+void Storage::serializeBleSchedule(const BleSchedule& s, JsonObject& obj) {
+    obj["id"] = s.id;
+    obj["name"] = s.name;
+    obj["startHour"] = s.startHour;
+    obj["startMinute"] = s.startMinute;
+    obj["endHour"] = s.endHour;
+    obj["endMinute"] = s.endMinute;
+    obj["days"] = s.days;
+    obj["enabled"] = s.enabled;
+}
+
+// =============================================================================
+// Storage initialization
+// =============================================================================
 
 bool Storage::begin() {
     // Initialize preferences
@@ -31,8 +88,11 @@ bool Storage::begin() {
     // Load BLE schedules
     loadBleSchedules();
 
-    Serial.printf("Storage: Initialized, device ID: %s, %d schedules, %d BLE schedules\n",
-                  deviceId, scheduleCount, bleScheduleCount);
+    // Load feed history
+    loadFeedHistory();
+
+    Serial.printf("Storage: Initialized, device ID: %s, %d schedules, %d BLE schedules, %d history entries\n",
+                  deviceId, getScheduleCount(), getBleScheduleCount(), getFeedHistoryCount());
     return true;
 }
 
@@ -67,215 +127,121 @@ void Storage::initDefaultSettings() {
     strncpy(settings.deviceId, deviceId, 5);
     settings.motorDuration = MOTOR_DEFAULT_DURATION_SEC;
     settings.vacationMode = false;
-    settings.batteryType = BatteryType::SLA;
     settings.sleepTimeout = DEFAULT_SLEEP_TIMEOUT;
+    settings.timezoneOffset = 0;  // UTC
+    settings.batteryType = BatteryType::SLA;  // Default to SLA
 }
 
 void Storage::loadSettings() {
     settings.motorDuration = prefs.getUChar(PREF_MOTOR_DURATION, MOTOR_DEFAULT_DURATION_SEC);
     settings.vacationMode = prefs.getBool(PREF_VACATION_MODE, false);
-    settings.batteryType = static_cast<BatteryType>(prefs.getUChar("batType", static_cast<uint8_t>(BatteryType::SLA)));
     settings.sleepTimeout = static_cast<SleepTimeout>(prefs.getUChar("sleepTmout", static_cast<uint8_t>(DEFAULT_SLEEP_TIMEOUT)));
+    settings.timezoneOffset = prefs.getShort("tzOffset", 0);  // Default to UTC
+    settings.batteryType = static_cast<BatteryType>(prefs.getUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(BatteryType::SLA)));
     strncpy(settings.deviceId, deviceId, 5);
 }
 
 void Storage::saveSettings() {
     prefs.putUChar(PREF_MOTOR_DURATION, settings.motorDuration);
     prefs.putBool(PREF_VACATION_MODE, settings.vacationMode);
-    prefs.putUChar("batType", static_cast<uint8_t>(settings.batteryType));
     prefs.putUChar("sleepTmout", static_cast<uint8_t>(settings.sleepTimeout));
+    prefs.putShort("tzOffset", settings.timezoneOffset);
+    prefs.putUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(settings.batteryType));
     Serial.println("Storage: Settings saved");
 }
 
+// =============================================================================
+// Feed Schedules - delegate to ScheduleManager
+// =============================================================================
+
 void Storage::loadSchedules() {
-    File file = LittleFS.open(SCHEDULES_FILE, "r");
-    if (!file) {
-        Serial.println("Storage: No schedules file found, creating default");
-        scheduleCount = 0;
-        // Create default 7:00 AM daily schedule for testing
+    feedSchedules.load(SCHEDULES_FILE, "schedules", deserializeFeedSchedule);
+
+    // Create default schedule if none exist
+    if (feedSchedules.getCount() == 0) {
+        Serial.println("Storage: No schedules found, creating default");
         Schedule defaultSched = {};
-        defaultSched.hour = 7;
+        defaultSched.hour = 13;  // 13:00 UTC = 7:00 AM CST / 8:00 AM EST
         defaultSched.minute = 0;
-        defaultSched.days = 0x7F;  // All days
+        defaultSched.days = DAYS_ALL;
         defaultSched.enabled = true;
-        defaultSched.duration = 0;  // Use default
+        defaultSched.duration = 0;
+        defaultSched.startMonth = -1;
+        defaultSched.startDay = -1;
+        defaultSched.endMonth = -1;
+        defaultSched.endDay = -1;
         addSchedule(defaultSched);
-        return;
     }
-
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-
-    if (error) {
-        Serial.printf("Storage: Failed to parse schedules: %s\n", error.c_str());
-        scheduleCount = 0;
-        return;
-    }
-
-    JsonArray arr = doc["schedules"].as<JsonArray>();
-    scheduleCount = 0;
-    nextScheduleId = 1;
-
-    for (JsonObject obj : arr) {
-        if (scheduleCount >= MAX_SCHEDULES) break;
-
-        Schedule& s = schedules[scheduleCount];
-        s.id = obj["id"] | nextScheduleId;
-        if (s.id >= nextScheduleId) {
-            nextScheduleId = s.id + 1;
-        }
-
-        strlcpy(s.name, obj["name"] | "", sizeof(s.name));
-        s.hour = obj["hour"] | 6;
-        s.minute = obj["minute"] | 0;
-        s.days = obj["days"] | 0x7F;  // Default all days
-        s.startMonth = obj["startMonth"] | -1;
-        s.startDay = obj["startDay"] | -1;
-        s.endMonth = obj["endMonth"] | -1;
-        s.endDay = obj["endDay"] | -1;
-        s.duration = obj["duration"] | 0;
-        s.enabled = obj["enabled"] | true;
-
-        // Generate name if empty
-        if (s.name[0] == '\0') {
-            s.generateName();
-        }
-
-        scheduleCount++;
-    }
-
-    Serial.printf("Storage: Loaded %d schedules\n", scheduleCount);
 }
 
 void Storage::saveSchedules() {
-    JsonDocument doc;
-    JsonArray arr = doc["schedules"].to<JsonArray>();
-
-    for (int i = 0; i < scheduleCount; i++) {
-        JsonObject obj = arr.add<JsonObject>();
-        Schedule& s = schedules[i];
-
-        obj["id"] = s.id;
-        obj["name"] = s.name;
-        obj["hour"] = s.hour;
-        obj["minute"] = s.minute;
-        obj["days"] = s.days;
-        obj["startMonth"] = s.startMonth;
-        obj["startDay"] = s.startDay;
-        obj["endMonth"] = s.endMonth;
-        obj["endDay"] = s.endDay;
-        obj["duration"] = s.duration;
-        obj["enabled"] = s.enabled;
-    }
-
-    File file = LittleFS.open(SCHEDULES_FILE, "w");
-    if (!file) {
-        Serial.println("Storage: Failed to open schedules file for writing");
-        return;
-    }
-
-    serializeJson(doc, file);
-    file.close();
-    Serial.printf("Storage: Saved %d schedules\n", scheduleCount);
+    feedSchedules.save(SCHEDULES_FILE, "schedules", serializeFeedSchedule);
 }
 
 Schedule* Storage::getSchedule(int index) {
-    if (index < 0 || index >= scheduleCount) {
-        return nullptr;
-    }
-    return &schedules[index];
+    return feedSchedules.get(index);
 }
 
 Schedule* Storage::getScheduleById(uint16_t id) {
-    for (int i = 0; i < scheduleCount; i++) {
-        if (schedules[i].id == id) {
-            return &schedules[i];
-        }
-    }
-    return nullptr;
+    return feedSchedules.getById(id);
 }
 
 bool Storage::addSchedule(const Schedule& schedule) {
-    if (scheduleCount >= MAX_SCHEDULES) {
-        Serial.println("Storage: Max schedules reached");
-        return false;
+    Schedule s = schedule;
+    // Generate name if empty, using local time
+    if (s.name[0] == '\0') {
+        s.generateName(settings.timezoneOffset);
     }
-
-    schedules[scheduleCount] = schedule;
-    schedules[scheduleCount].id = nextScheduleId++;
-
-    // Generate name if empty
-    if (schedules[scheduleCount].name[0] == '\0') {
-        schedules[scheduleCount].generateName();
+    bool result = feedSchedules.add(s);
+    if (result) {
+        saveSchedules();
     }
-
-    scheduleCount++;
-    saveSchedules();
-    return true;
+    return result;
 }
 
 bool Storage::updateSchedule(uint16_t id, const Schedule& schedule) {
-    Schedule* existing = getScheduleById(id);
-    if (!existing) {
-        return false;
+    Schedule s = schedule;
+    if (s.name[0] == '\0') {
+        s.generateName(settings.timezoneOffset);
     }
-
-    *existing = schedule;
-    existing->id = id;  // Preserve original ID
-
-    if (existing->name[0] == '\0') {
-        existing->generateName();
+    bool result = feedSchedules.update(id, s);
+    if (result) {
+        saveSchedules();
     }
-
-    saveSchedules();
-    return true;
+    return result;
 }
 
 bool Storage::deleteSchedule(uint16_t id) {
-    int index = -1;
-    for (int i = 0; i < scheduleCount; i++) {
-        if (schedules[i].id == id) {
-            index = i;
-            break;
-        }
+    bool result = feedSchedules.remove(id);
+    if (result) {
+        saveSchedules();
     }
-
-    if (index < 0) {
-        return false;
-    }
-
-    // Shift remaining schedules
-    for (int i = index; i < scheduleCount - 1; i++) {
-        schedules[i] = schedules[i + 1];
-    }
-    scheduleCount--;
-
-    saveSchedules();
-    return true;
+    return result;
 }
 
 String Storage::getSchedulesJson() {
+    // Return with additional formatting for API response
     JsonDocument doc;
     JsonArray arr = doc.to<JsonArray>();
 
-    for (int i = 0; i < scheduleCount; i++) {
-        JsonObject obj = arr.add<JsonObject>();
-        Schedule& s = schedules[i];
+    for (int i = 0; i < getScheduleCount(); i++) {
+        Schedule* s = getSchedule(i);
+        if (!s) continue;
 
-        obj["id"] = s.id;
-        obj["name"] = s.name;
-        obj["time"] = String(s.hour < 10 ? "0" : "") + s.hour + ":" +
-                      String(s.minute < 10 ? "0" : "") + s.minute;
-        obj["hour"] = s.hour;
-        obj["minute"] = s.minute;
-        obj["days"] = s.days;
-        obj["startMonth"] = s.startMonth;
-        obj["startDay"] = s.startDay;
-        obj["endMonth"] = s.endMonth;
-        obj["endDay"] = s.endDay;
-        obj["duration"] = s.duration;
-        obj["enabled"] = s.enabled;
+        JsonObject obj = arr.add<JsonObject>();
+        obj["id"] = s->id;
+        obj["name"] = s->name;
+        obj["time"] = String(s->hour < 10 ? "0" : "") + s->hour + ":" +
+                      String(s->minute < 10 ? "0" : "") + s->minute;
+        obj["hour"] = s->hour;
+        obj["minute"] = s->minute;
+        obj["days"] = s->days;
+        obj["startMonth"] = s->startMonth;
+        obj["startDay"] = s->startDay;
+        obj["endMonth"] = s->endMonth;
+        obj["endDay"] = s->endDay;
+        obj["duration"] = s->duration;
+        obj["enabled"] = s->enabled;
     }
 
     String result;
@@ -298,40 +264,21 @@ bool Storage::setSchedulesFromJson(const String& json) {
         return false;
     }
 
-    scheduleCount = 0;
+    feedSchedules.clear();
     for (JsonObject obj : arr) {
-        if (scheduleCount >= MAX_SCHEDULES) break;
-
-        Schedule& s = schedules[scheduleCount];
-        s.id = obj["id"] | (scheduleCount + 1);
-
-        strlcpy(s.name, obj["name"] | "", sizeof(s.name));
-        s.hour = obj["hour"] | 6;
-        s.minute = obj["minute"] | 0;
-        s.days = obj["days"] | 0x7F;
-        s.startMonth = obj["startMonth"] | -1;
-        s.startDay = obj["startDay"] | -1;
-        s.endMonth = obj["endMonth"] | -1;
-        s.endDay = obj["endDay"] | -1;
-        s.duration = obj["duration"] | 0;
-        s.enabled = obj["enabled"] | true;
-
-        if (s.name[0] == '\0') {
-            s.generateName();
-        }
-
-        if (s.id >= nextScheduleId) {
-            nextScheduleId = s.id + 1;
-        }
-
-        scheduleCount++;
+        Schedule s;
+        deserializeFeedSchedule(s, obj);
+        feedSchedules.add(s);
     }
 
     saveSchedules();
     return true;
 }
 
+// =============================================================================
 // Schedule helper methods
+// =============================================================================
+
 bool Schedule::isActiveOnDay(uint8_t dayOfWeek) const {
     if (dayOfWeek > 6) return false;
     return (days & (1 << dayOfWeek)) != 0;
@@ -361,17 +308,22 @@ bool Schedule::isActiveOnDate(int month, int day) const {
     return true;
 }
 
-void Schedule::generateName() {
+void Schedule::generateName(int16_t tzOffset) {
     char timeStr[8];
-    int displayHour = hour;
+
+    // Convert UTC hour to local time for display
+    int localHour = hour - (tzOffset / 60);
+    localHour = (localHour + 24) % 24;
+
+    int displayHour = localHour;
     const char* ampm = "am";
 
-    if (hour == 0) {
+    if (localHour == 0) {
         displayHour = 12;
-    } else if (hour == 12) {
+    } else if (localHour == 12) {
         ampm = "pm";
-    } else if (hour > 12) {
-        displayHour = hour - 12;
+    } else if (localHour > 12) {
+        displayHour = localHour - 12;
         ampm = "pm";
     }
 
@@ -379,11 +331,11 @@ void Schedule::generateName() {
 
     // Determine day pattern
     const char* dayPattern = "";
-    if (days == 0x7F) {
+    if (days == DAYS_ALL) {
         dayPattern = "Daily";
-    } else if (days == 0x3E) {  // Mon-Fri (bits 1-5)
+    } else if (days == DAYS_WEEKDAYS) {
         dayPattern = "Weekdays";
-    } else if (days == 0x41) {  // Sat-Sun (bits 0,6)
+    } else if (days == DAYS_WEEKENDS) {
         dayPattern = "Weekends";
     } else {
         // Build custom day string
@@ -404,7 +356,7 @@ void Schedule::generateName() {
 }
 
 bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
-    if (scheduleCount == 0) return false;
+    if (getScheduleCount() == 0) return false;
 
     // Get current time
     struct tm timeinfo;
@@ -421,31 +373,31 @@ bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
     int bestHour = -1;
     int bestMinute = -1;
 
-    for (int i = 0; i < scheduleCount; i++) {
-        Schedule& s = schedules[i];
-        if (!s.enabled) continue;
-        if (!s.isActiveOnDate(currentMonth, currentDayOfMonth)) continue;
+    for (int i = 0; i < getScheduleCount(); i++) {
+        Schedule* s = getSchedule(i);
+        if (!s || !s->enabled) continue;
+        if (!s->isActiveOnDate(currentMonth, currentDayOfMonth)) continue;
 
         // Check each day of the week
         for (int d = 0; d < 7; d++) {
             int checkDay = (currentDay + d) % 7;
 
-            if (!s.isActiveOnDay(checkDay)) continue;
+            if (!s->isActiveOnDay(checkDay)) continue;
 
             // Check if this schedule time is still upcoming
             bool isToday = (d == 0);
-            bool isPast = isToday && (s.hour < currentHour ||
-                         (s.hour == currentHour && s.minute <= currentMin));
+            bool isPast = isToday && (s->hour < currentHour ||
+                         (s->hour == currentHour && s->minute <= currentMin));
 
             if (isPast) continue;
 
             // This is a valid upcoming run
             if (d < bestDaysAway ||
                 (d == bestDaysAway &&
-                 (s.hour < bestHour || (s.hour == bestHour && s.minute < bestMinute)))) {
+                 (s->hour < bestHour || (s->hour == bestHour && s->minute < bestMinute)))) {
                 bestDaysAway = d;
-                bestHour = s.hour;
-                bestMinute = s.minute;
+                bestHour = s->hour;
+                bestMinute = s->minute;
             }
             break;  // Found the next occurrence for this schedule
         }
@@ -460,7 +412,82 @@ bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
     return false;
 }
 
+// =============================================================================
+// BLE Schedules - delegate to ScheduleManager
+// =============================================================================
+
+void Storage::loadBleSchedules() {
+    bleSchedules.load(BLE_SCHEDULES_FILE, "bleSchedules", deserializeBleSchedule);
+}
+
+void Storage::saveBleSchedules() {
+    bleSchedules.save(BLE_SCHEDULES_FILE, "bleSchedules", serializeBleSchedule);
+}
+
+BleSchedule* Storage::getBleSchedule(int index) {
+    return bleSchedules.get(index);
+}
+
+BleSchedule* Storage::getBleScheduleById(uint16_t id) {
+    return bleSchedules.getById(id);
+}
+
+bool Storage::addBleSchedule(const BleSchedule& schedule) {
+    bool result = bleSchedules.add(schedule);
+    if (result) {
+        saveBleSchedules();
+    }
+    return result;
+}
+
+bool Storage::updateBleSchedule(uint16_t id, const BleSchedule& schedule) {
+    bool result = bleSchedules.update(id, schedule);
+    if (result) {
+        saveBleSchedules();
+    }
+    return result;
+}
+
+bool Storage::deleteBleSchedule(uint16_t id) {
+    bool result = bleSchedules.remove(id);
+    if (result) {
+        saveBleSchedules();
+    }
+    return result;
+}
+
+String Storage::getBleSchedulesJson() {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+
+    for (int i = 0; i < getBleScheduleCount(); i++) {
+        BleSchedule* s = getBleSchedule(i);
+        if (!s) continue;
+
+        JsonObject obj = arr.add<JsonObject>();
+        obj["id"] = s->id;
+        obj["name"] = s->name;
+        obj["startTime"] = String(s->startHour < 10 ? "0" : "") + s->startHour + ":" +
+                           String(s->startMinute < 10 ? "0" : "") + s->startMinute;
+        obj["endTime"] = String(s->endHour < 10 ? "0" : "") + s->endHour + ":" +
+                         String(s->endMinute < 10 ? "0" : "") + s->endMinute;
+        obj["startHour"] = s->startHour;
+        obj["startMinute"] = s->startMinute;
+        obj["endHour"] = s->endHour;
+        obj["endMinute"] = s->endMinute;
+        obj["days"] = s->days;
+        obj["enabled"] = s->enabled;
+    }
+
+    String result;
+    serializeJson(doc, result);
+    return result;
+}
+
+// =============================================================================
 // BleSchedule helper methods
+// =============================================================================
+
 bool BleSchedule::isActiveOnDay(uint8_t dayOfWeek) const {
     if (dayOfWeek > 6) return false;
     return (days & (1 << dayOfWeek)) != 0;
@@ -484,176 +511,9 @@ bool BleSchedule::isActiveNow(int hour, int minute, int dayOfWeek) const {
     }
 }
 
-// BLE Schedules storage
-void Storage::loadBleSchedules() {
-    File file = LittleFS.open("/ble_schedules.json", "r");
-    if (!file) {
-        Serial.println("Storage: No BLE schedules file found");
-        bleScheduleCount = 0;
-        return;
-    }
-
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-
-    if (error) {
-        Serial.printf("Storage: Failed to parse BLE schedules: %s\n", error.c_str());
-        bleScheduleCount = 0;
-        return;
-    }
-
-    JsonArray arr = doc["bleSchedules"].as<JsonArray>();
-    bleScheduleCount = 0;
-    nextBleScheduleId = 1;
-
-    for (JsonObject obj : arr) {
-        if (bleScheduleCount >= MAX_BLE_SCHEDULES) break;
-
-        BleSchedule& s = bleSchedules[bleScheduleCount];
-        s.id = obj["id"] | nextBleScheduleId;
-        if (s.id >= nextBleScheduleId) {
-            nextBleScheduleId = s.id + 1;
-        }
-
-        strlcpy(s.name, obj["name"] | "", sizeof(s.name));
-        s.startHour = obj["startHour"] | 4;
-        s.startMinute = obj["startMinute"] | 0;
-        s.endHour = obj["endHour"] | 20;
-        s.endMinute = obj["endMinute"] | 0;
-        s.days = obj["days"] | 0x7F;
-        s.enabled = obj["enabled"] | true;
-
-        bleScheduleCount++;
-    }
-
-    Serial.printf("Storage: Loaded %d BLE schedules\n", bleScheduleCount);
-}
-
-void Storage::saveBleSchedules() {
-    JsonDocument doc;
-    JsonArray arr = doc["bleSchedules"].to<JsonArray>();
-
-    for (int i = 0; i < bleScheduleCount; i++) {
-        JsonObject obj = arr.add<JsonObject>();
-        BleSchedule& s = bleSchedules[i];
-
-        obj["id"] = s.id;
-        obj["name"] = s.name;
-        obj["startHour"] = s.startHour;
-        obj["startMinute"] = s.startMinute;
-        obj["endHour"] = s.endHour;
-        obj["endMinute"] = s.endMinute;
-        obj["days"] = s.days;
-        obj["enabled"] = s.enabled;
-    }
-
-    File file = LittleFS.open("/ble_schedules.json", "w");
-    if (!file) {
-        Serial.println("Storage: Failed to open BLE schedules file for writing");
-        return;
-    }
-
-    serializeJson(doc, file);
-    file.close();
-    Serial.printf("Storage: Saved %d BLE schedules\n", bleScheduleCount);
-}
-
-BleSchedule* Storage::getBleSchedule(int index) {
-    if (index < 0 || index >= bleScheduleCount) {
-        return nullptr;
-    }
-    return &bleSchedules[index];
-}
-
-BleSchedule* Storage::getBleScheduleById(uint16_t id) {
-    for (int i = 0; i < bleScheduleCount; i++) {
-        if (bleSchedules[i].id == id) {
-            return &bleSchedules[i];
-        }
-    }
-    return nullptr;
-}
-
-bool Storage::addBleSchedule(const BleSchedule& schedule) {
-    if (bleScheduleCount >= MAX_BLE_SCHEDULES) {
-        Serial.println("Storage: Max BLE schedules reached");
-        return false;
-    }
-
-    bleSchedules[bleScheduleCount] = schedule;
-    bleSchedules[bleScheduleCount].id = nextBleScheduleId++;
-    bleScheduleCount++;
-    saveBleSchedules();
-    return true;
-}
-
-bool Storage::updateBleSchedule(uint16_t id, const BleSchedule& schedule) {
-    BleSchedule* existing = getBleScheduleById(id);
-    if (!existing) {
-        return false;
-    }
-
-    *existing = schedule;
-    existing->id = id;  // Preserve original ID
-    saveBleSchedules();
-    return true;
-}
-
-bool Storage::deleteBleSchedule(uint16_t id) {
-    int index = -1;
-    for (int i = 0; i < bleScheduleCount; i++) {
-        if (bleSchedules[i].id == id) {
-            index = i;
-            break;
-        }
-    }
-
-    if (index < 0) {
-        return false;
-    }
-
-    // Shift remaining schedules
-    for (int i = index; i < bleScheduleCount - 1; i++) {
-        bleSchedules[i] = bleSchedules[i + 1];
-    }
-    bleScheduleCount--;
-
-    saveBleSchedules();
-    return true;
-}
-
-String Storage::getBleSchedulesJson() {
-    JsonDocument doc;
-    JsonArray arr = doc.to<JsonArray>();
-
-    for (int i = 0; i < bleScheduleCount; i++) {
-        JsonObject obj = arr.add<JsonObject>();
-        BleSchedule& s = bleSchedules[i];
-
-        obj["id"] = s.id;
-        obj["name"] = s.name;
-        obj["startTime"] = String(s.startHour < 10 ? "0" : "") + s.startHour + ":" +
-                           String(s.startMinute < 10 ? "0" : "") + s.startMinute;
-        obj["endTime"] = String(s.endHour < 10 ? "0" : "") + s.endHour + ":" +
-                         String(s.endMinute < 10 ? "0" : "") + s.endMinute;
-        obj["startHour"] = s.startHour;
-        obj["startMinute"] = s.startMinute;
-        obj["endHour"] = s.endHour;
-        obj["endMinute"] = s.endMinute;
-        obj["days"] = s.days;
-        obj["enabled"] = s.enabled;
-    }
-
-    String result;
-    serializeJson(doc, result);
-    return result;
-}
-
 bool Storage::shouldBleBeActive() {
     // If no BLE schedules configured, default to always-on
-    // Users can add schedules to limit BLE hours for power savings
-    if (bleScheduleCount == 0) {
+    if (getBleScheduleCount() == 0) {
         return true;
     }
 
@@ -666,8 +526,9 @@ bool Storage::shouldBleBeActive() {
     int minute = timeinfo.tm_min;
     int dayOfWeek = timeinfo.tm_wday;
 
-    for (int i = 0; i < bleScheduleCount; i++) {
-        if (bleSchedules[i].isActiveNow(hour, minute, dayOfWeek)) {
+    for (int i = 0; i < getBleScheduleCount(); i++) {
+        BleSchedule* s = getBleSchedule(i);
+        if (s && s->isActiveNow(hour, minute, dayOfWeek)) {
             return true;
         }
     }
@@ -675,20 +536,25 @@ bool Storage::shouldBleBeActive() {
     return false;
 }
 
+// =============================================================================
+// Reset to defaults
+// =============================================================================
+
 void Storage::resetToDefaults() {
     Serial.println("Storage: Resetting to defaults");
 
     // Clear all schedules
-    scheduleCount = 0;
-    nextScheduleId = 1;
-
-    // Clear BLE schedules
-    bleScheduleCount = 0;
-    nextBleScheduleId = 1;
+    feedSchedules.clear();
+    bleSchedules.clear();
 
     // Delete schedules files
     LittleFS.remove(SCHEDULES_FILE);
-    LittleFS.remove("/ble_schedules.json");
+    LittleFS.remove(BLE_SCHEDULES_FILE);
+    LittleFS.remove(FEED_HISTORY_FILE);
+
+    // Clear feed history
+    feedHistoryCount = 0;
+    feedHistoryHead = 0;
 
     // Reset settings to defaults
     initDefaultSettings();
@@ -696,12 +562,153 @@ void Storage::resetToDefaults() {
 
     // Create default schedule
     Schedule defaultSched = {};
-    defaultSched.hour = 7;
+    defaultSched.hour = 13;  // 13:00 UTC = 7:00 AM CST / 8:00 AM EST
     defaultSched.minute = 0;
-    defaultSched.days = 0x7F;  // All days
+    defaultSched.days = DAYS_ALL;
     defaultSched.enabled = true;
     defaultSched.duration = 0;
+    defaultSched.startMonth = -1;
+    defaultSched.startDay = -1;
+    defaultSched.endMonth = -1;
+    defaultSched.endDay = -1;
     addSchedule(defaultSched);
 
     Serial.println("Storage: Reset complete");
+}
+
+// =============================================================================
+// Feed History
+// =============================================================================
+
+void Storage::loadFeedHistory() {
+    File file = LittleFS.open(FEED_HISTORY_FILE, "r");
+    if (!file) {
+        Serial.println("Storage: No feed history file found");
+        feedHistoryCount = 0;
+        feedHistoryHead = 0;
+        return;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+
+    if (error) {
+        Serial.printf("Storage: Failed to parse feed history: %s\n", error.c_str());
+        feedHistoryCount = 0;
+        feedHistoryHead = 0;
+        return;
+    }
+
+    JsonArray arr = doc["history"].as<JsonArray>();
+    if (!arr) {
+        feedHistoryCount = 0;
+        feedHistoryHead = 0;
+        return;
+    }
+
+    feedHistoryCount = 0;
+    feedHistoryHead = 0;
+
+    // Load events in order (most recent first)
+    for (JsonObject obj : arr) {
+        if (feedHistoryCount >= MAX_FEED_HISTORY) break;
+
+        FeedEvent& event = feedHistory[feedHistoryCount];
+        event.timestamp = obj["timestamp"] | 0;
+        event.duration = obj["duration"] | 0;
+        event.manual = obj["manual"] | false;
+        strlcpy(event.scheduleName, obj["scheduleName"] | "", sizeof(event.scheduleName));
+
+        feedHistoryCount++;
+    }
+
+    Serial.printf("Storage: Loaded %d feed history entries\n", feedHistoryCount);
+}
+
+void Storage::saveFeedHistory() {
+    File file = LittleFS.open(FEED_HISTORY_FILE, "w");
+    if (!file) {
+        Serial.println("Storage: Failed to open feed history file for writing");
+        return;
+    }
+
+    JsonDocument doc;
+    JsonArray arr = doc["history"].to<JsonArray>();
+
+    // Save events in order (most recent first)
+    for (int i = 0; i < feedHistoryCount; i++) {
+        const FeedEvent* event = getFeedEvent(i);
+        if (!event) continue;
+
+        JsonObject obj = arr.add<JsonObject>();
+        obj["timestamp"] = event->timestamp;
+        obj["duration"] = event->duration;
+        obj["manual"] = event->manual;
+        obj["scheduleName"] = event->scheduleName;
+    }
+
+    serializeJson(doc, file);
+    file.close();
+
+    Serial.printf("Storage: Saved %d feed history entries\n", feedHistoryCount);
+}
+
+void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleName) {
+    // Get current Unix timestamp
+    time_t now = time(nullptr);
+
+    // Move head to next slot (circular buffer)
+    if (feedHistoryCount > 0) {
+        feedHistoryHead = (feedHistoryHead + 1) % MAX_FEED_HISTORY;
+    }
+
+    FeedEvent& event = feedHistory[feedHistoryHead];
+    event.timestamp = (uint32_t)now;
+    event.duration = duration;
+    event.manual = manual;
+    if (scheduleName && scheduleName[0] != '\0') {
+        strlcpy(event.scheduleName, scheduleName, sizeof(event.scheduleName));
+    } else {
+        event.scheduleName[0] = '\0';
+    }
+
+    if (feedHistoryCount < MAX_FEED_HISTORY) {
+        feedHistoryCount++;
+    }
+
+    Serial.printf("Storage: Logged feed event (duration=%ds, manual=%s, schedule=%s)\n",
+                  duration, manual ? "yes" : "no", scheduleName ? scheduleName : "");
+
+    saveFeedHistory();
+}
+
+const FeedEvent* Storage::getFeedEvent(int index) const {
+    if (index < 0 || index >= feedHistoryCount) {
+        return nullptr;
+    }
+
+    // Circular buffer: head points to most recent, index 0 = most recent
+    int actualIndex = (feedHistoryHead - index + MAX_FEED_HISTORY) % MAX_FEED_HISTORY;
+    return &feedHistory[actualIndex];
+}
+
+String Storage::getFeedHistoryJson() {
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+
+    for (int i = 0; i < feedHistoryCount; i++) {
+        const FeedEvent* event = getFeedEvent(i);
+        if (!event) continue;
+
+        JsonObject obj = arr.add<JsonObject>();
+        obj["timestamp"] = event->timestamp;
+        obj["duration"] = event->duration;
+        obj["manual"] = event->manual;
+        obj["scheduleName"] = event->scheduleName;
+    }
+
+    String result;
+    serializeJson(doc, result);
+    return result;
 }

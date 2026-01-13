@@ -11,12 +11,12 @@ void Motor::begin() {
     deactivateMotor();
 
     // Initialize hardware safety timer
-    // Timer 0, prescaler 80 (1MHz = 1µs ticks), count up
-    safetyTimer = timerBegin(0, 80, true);
+    // ESP32 Arduino 3.x API: timerBegin(frequency_hz) returns timer handle
+    // Using 1MHz frequency (1µs resolution)
+    safetyTimer = timerBegin(1000000);
     if (safetyTimer) {
-        timerAttachInterrupt(safetyTimer, &Motor::onSafetyTimeout, true);
-        timerAlarmWrite(safetyTimer, MOTOR_MAX_DURATION_SEC * 1000000ULL, false);
-        timerAlarmDisable(safetyTimer);
+        timerAttachInterrupt(safetyTimer, &Motor::onSafetyTimeout);
+        // Don't set alarm yet - will be set when motor starts
     }
 }
 
@@ -59,9 +59,10 @@ void Motor::startThrow(uint8_t durationSec) {
     startTime = millis();
 
     // Start safety timer before activating motor
+    // ESP32 Arduino 3.x API: timerAlarm(timer, alarm_value_us, autoreload, reload_count)
     if (safetyTimer) {
-        timerWrite(safetyTimer, 0);
-        timerAlarmEnable(safetyTimer);
+        timerRestart(safetyTimer);
+        timerAlarm(safetyTimer, MOTOR_MAX_DURATION_SEC * 1000000ULL, false, 0);
     }
 
     activateMotor();
@@ -74,9 +75,9 @@ void Motor::stop() {
     deactivateMotor();
     running = false;
 
-    // Disable safety timer
+    // Stop safety timer (ESP32 Arduino 3.x API)
     if (safetyTimer) {
-        timerAlarmDisable(safetyTimer);
+        timerStop(safetyTimer);
     }
 
     Serial.println("Motor: Stopped");

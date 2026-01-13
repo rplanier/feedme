@@ -14,7 +14,8 @@ constexpr char FEEDME_VERSION[] = "0.1b";
 
 // Define which hardware target we're building for
 // Uncomment ONE of these:
-#define TARGET_XIAO_ESP32C3    // Needs single-button UI (only 11 GPIO pins)
+// #define TARGET_XIAO_ESP32C3    // Test board
+#define TARGET_XIAO_ESP32C6       // Target production board (better BLE range)
 // #define TARGET_ESP32C3_SUPERMINI  // Original board (has antenna issues)
 
 // =============================================================================
@@ -26,6 +27,8 @@ constexpr char FEEDME_VERSION[] = "0.1b";
 // Seeed XIAO ESP32-C3 + 2.9" E-Paper
 // Available GPIO: 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 21 (11 pins)
 // Single-button UI: press = next page, hold = context action (e.g., toggle WiFi)
+// Using internal RTC (no DS3231) - frees GPIO 8/9
+// D0 (GPIO 2) reserved for future solar ADC
 // -----------------------------------------------------------------------------
 
 // E-Paper Display (SPI)
@@ -36,21 +39,64 @@ constexpr uint8_t PIN_EPD_DC = 5;     // D3
 constexpr uint8_t PIN_EPD_RST = 10;   // D10
 constexpr uint8_t PIN_EPD_BUSY = 20;  // D7
 
-// DS3231 RTC (I2C)
-constexpr uint8_t PIN_RTC_SDA = 8;    // D8
-constexpr uint8_t PIN_RTC_SCL = 9;    // D9
+// DS3231 RTC (I2C) - not used, using internal RTC instead
+// Pins reserved but available for other uses
+constexpr uint8_t PIN_RTC_SDA = 8;    // D8 - free
+constexpr uint8_t PIN_RTC_SCL = 9;    // D9 - used for BOOT button
 
-// Single button mode: press = next page, hold = context action
-constexpr bool SINGLE_BUTTON_MODE = true;
-constexpr uint8_t PIN_BUTTON = 2;         // D0 - the only button
-constexpr uint8_t PIN_BUTTON_PREV = 2;    // Alias for compatibility
-constexpr uint8_t PIN_BUTTON_NEXT = 2;    // Alias for compatibility
+// Single button mode: using onboard BOOT button (GPIO 9)
+// Press = next page, hold = context action (toggle WiFi)
+#define SINGLE_BUTTON_MODE 1
+constexpr uint8_t PIN_BUTTON = 9;         // BOOT button (onboard)
+constexpr uint8_t PIN_BUTTON_PREV = 9;    // Alias for compatibility
+constexpr uint8_t PIN_BUTTON_NEXT = 9;    // Alias for compatibility
 
 // Motor control
 constexpr uint8_t PIN_MOTOR_RELAY = 21;   // D6
 
 // Battery sensing
 constexpr uint8_t PIN_BATTERY_ADC = 3;    // D1/A1 (ADC capable)
+
+// Future: Solar panel voltage sensing
+// constexpr uint8_t PIN_SOLAR_ADC = 2;   // D0/A0 (ADC capable)
+
+#elif defined(TARGET_XIAO_ESP32C6)
+// -----------------------------------------------------------------------------
+// Seeed XIAO ESP32-C6 + 2.9" E-Paper (production target - better BLE range)
+// Pin assignments match FeedMe PCB v0.2
+// D-pin to GPIO mapping for C6 (from Seeed wiki):
+//   D0=GPIO0, D1=GPIO1, D2=GPIO2, D3=GPIO21, D4=GPIO22, D5=GPIO23,
+//   D6=GPIO16, D7=GPIO17, D8=GPIO19, D9=GPIO20, D10=GPIO18
+// -----------------------------------------------------------------------------
+
+// E-Paper Display (SPI)
+constexpr uint8_t PIN_EPD_CLK = 2;     // D2 - SPI Clock
+constexpr uint8_t PIN_EPD_DC = 21;     // D3 - Data/Command
+constexpr uint8_t PIN_EPD_MOSI = 22;   // D4 - SPI MOSI (DIN)
+constexpr uint8_t PIN_EPD_CS = 23;     // D5 - Chip Select
+constexpr int8_t  PIN_EPD_RST = -1;    // RST has external pull-up on PCB (directly to 3V3)
+constexpr int8_t  PIN_EPD_BUSY = 18;   // D10 (GPIO18) - EPD BUSY pin
+
+// DS3231M RTC (I2C)
+constexpr uint8_t PIN_RTC_SDA = 17;    // D7 - I2C Data
+constexpr uint8_t PIN_RTC_SCL = 19;    // D8 - I2C Clock
+
+// Buttons
+// BTN1 on D9, BTN2 on D10 (active when solder jumper JP1 in BTN2 position)
+// When JP1 in EPD_BUSY position, single-button mode using BTN1 only
+#define SINGLE_BUTTON_MODE 1              // Set to 0 if JP1 connects D10 to BTN2
+constexpr uint8_t PIN_BUTTON = 20;         // D9 - BTN1 (directly wired to button)
+constexpr uint8_t PIN_BUTTON_PREV = 20;    // D9 - BTN1
+constexpr uint8_t PIN_BUTTON_NEXT = 18;    // D10 - BTN2 (shared with EPD_BUSY via JP1)
+
+// Motor control (P-channel high-side via 2N7002 gate driver)
+constexpr uint8_t PIN_MOTOR_RELAY = 16;   // D6 - MOTOR_CTRL
+
+// Battery sensing (voltage divider 100K/27K)
+constexpr uint8_t PIN_BATTERY_ADC = 1;    // D1 - BATT_SENSE (ADC capable)
+
+// Solar panel voltage sensing (voltage divider 100K/27K)
+constexpr uint8_t PIN_SOLAR_ADC = 0;      // D0 - SOLAR_SENSE (ADC capable)
 
 #elif defined(TARGET_ESP32C3_SUPERMINI)
 // -----------------------------------------------------------------------------
@@ -70,7 +116,7 @@ constexpr uint8_t PIN_RTC_SDA = 8;
 constexpr uint8_t PIN_RTC_SCL = 9;
 
 // Dual button mode
-constexpr bool SINGLE_BUTTON_MODE = false;
+#define SINGLE_BUTTON_MODE 0
 constexpr uint8_t PIN_BUTTON_PREV = 10;   // Previous page / scroll up
 constexpr uint8_t PIN_BUTTON_NEXT = 1;    // Next page / scroll down
 
@@ -81,7 +127,7 @@ constexpr uint8_t PIN_MOTOR_RELAY = 21;   // External relay/MOSFET
 constexpr uint8_t PIN_BATTERY_ADC = 0;    // ADC1_CH0 on ESP32-C3
 
 #else
-#error "No hardware target defined! Define TARGET_XIAO_ESP32C3 or TARGET_ESP32C3_SUPERMINI"
+#error "No hardware target defined! Define TARGET_XIAO_ESP32C3, TARGET_XIAO_ESP32C6, or TARGET_ESP32C3_SUPERMINI"
 #endif
 
 // =============================================================================
@@ -120,13 +166,6 @@ constexpr bool MOTOR_INVERTED = false;
 // Battery Settings
 // =============================================================================
 
-// Battery types with different discharge characteristics
-enum class BatteryType : uint8_t {
-    SLA = 0,    // Standard Sealed Lead Acid / Flooded
-    AGM = 1,    // Absorbed Glass Mat (deeper discharge tolerant)
-    GEL = 2     // Gel cell (deeper discharge tolerant)
-};
-
 // Sleep/display timeout options
 enum class SleepTimeout : uint8_t {
     TIMEOUT_15S = 15,
@@ -162,30 +201,70 @@ constexpr float ADC_REFERENCE_VOLTAGE = 3.3f;
 // ADC resolution (ESP32-C3 is 12-bit)
 constexpr uint16_t ADC_MAX_VALUE = 4095;
 
-// Battery status thresholds (12V lead-acid, based on state of charge curves)
+// Battery chemistry type (affects state-of-charge thresholds)
+enum class BatteryType : uint8_t {
+    SLA = 0,    // Sealed Lead Acid (standard)
+    AGM = 1,    // Absorbent Glass Mat (slightly higher voltages)
+    GEL = 2     // Gel Cell (slightly lower voltages)
+};
+
+// Battery status thresholds (lead-acid, based on state of charge curves)
 // These are open-circuit voltages - under load will be slightly lower
 //
-// State of Charge vs Voltage (12V battery, 6 cells):
-//   100% = 12.7V (2.12V/cell)
-//    75% = 12.4V (2.07V/cell)
-//    50% = 12.2V (2.03V/cell)
-//    25% = 12.0V (2.00V/cell)
-//     0% = 11.8V (1.97V/cell)
+// State of Charge vs Voltage (12V battery, 6 cells / 6V battery, 3 cells):
+//   100% = 12.7V / 6.35V (2.12V/cell)
+//    75% = 12.4V / 6.20V (2.07V/cell)
+//    50% = 12.2V / 6.10V (2.03V/cell)
+//    25% = 12.0V / 6.00V (2.00V/cell)
+//     0% = 11.8V / 5.90V (1.97V/cell)
+//  Damage risk below 10.5V / 5.25V (1.75V/cell)
 //
-// Note: Thresholds slightly below round numbers to match display rounding
-constexpr float BATTERY_VOLTAGE_GOOD = 12.45f;  // ~75%+ charge (displays as 12.5V+)
-constexpr float BATTERY_VOLTAGE_OKAY = 12.15f;  // ~50%+ charge (displays as 12.2V+)
-constexpr float BATTERY_VOLTAGE_LOW = 11.85f;   // ~25%+ charge (displays as 11.9V+)
+// Auto-detection: voltage > 9V = 12V battery, <= 9V = 6V battery
+// Chemistry (SLA/AGM/GEL) is user-configurable and affects Good/Fair/Low thresholds
 
-// Critical thresholds vary by battery type (below this = disable motor)
-// SLA/Flooded: more sensitive to deep discharge
-// AGM/Gel: can tolerate deeper discharge without damage
-constexpr float BATTERY_CRITICAL_SLA = 11.8f;   // Don't go below 0% SOC
-constexpr float BATTERY_CRITICAL_AGM = 11.5f;   // Can go slightly deeper
-constexpr float BATTERY_CRITICAL_GEL = 11.5f;   // Can go slightly deeper
+// 12V SLA (Sealed Lead Acid) thresholds - standard lead-acid
+constexpr float BATTERY_12V_SLA_GOOD = 12.4f;      // ~75%+ charge
+constexpr float BATTERY_12V_SLA_FAIR = 12.0f;      // ~25%+ charge
+constexpr float BATTERY_12V_SLA_LOW = 11.5f;       // Depleted, charge soon
 
-// Charging detection: voltage above this suggests solar is charging
-constexpr float BATTERY_CHARGING_THRESHOLD = 13.0f;
+// 12V AGM (Absorbent Glass Mat) thresholds - slightly higher resting voltage
+constexpr float BATTERY_12V_AGM_GOOD = 12.5f;      // ~75%+ charge
+constexpr float BATTERY_12V_AGM_FAIR = 12.1f;      // ~25%+ charge
+constexpr float BATTERY_12V_AGM_LOW = 11.6f;       // Depleted, charge soon
+
+// 12V GEL thresholds - similar to SLA, slightly more sensitive
+constexpr float BATTERY_12V_GEL_GOOD = 12.4f;      // ~75%+ charge
+constexpr float BATTERY_12V_GEL_FAIR = 11.9f;      // ~25%+ charge
+constexpr float BATTERY_12V_GEL_LOW = 11.4f;       // Depleted, charge soon
+
+// 12V critical threshold - same for all chemistries (damage risk)
+constexpr float BATTERY_12V_CRITICAL = 10.8f;      // Risk of damage, disable feeds
+
+// 6V SLA thresholds
+constexpr float BATTERY_6V_SLA_GOOD = 6.2f;        // ~75%+ charge
+constexpr float BATTERY_6V_SLA_FAIR = 6.0f;        // ~25%+ charge
+constexpr float BATTERY_6V_SLA_LOW = 5.75f;        // Depleted, charge soon
+
+// 6V AGM thresholds
+constexpr float BATTERY_6V_AGM_GOOD = 6.25f;       // ~75%+ charge
+constexpr float BATTERY_6V_AGM_FAIR = 6.05f;       // ~25%+ charge
+constexpr float BATTERY_6V_AGM_LOW = 5.8f;         // Depleted, charge soon
+
+// 6V GEL thresholds
+constexpr float BATTERY_6V_GEL_GOOD = 6.2f;        // ~75%+ charge
+constexpr float BATTERY_6V_GEL_FAIR = 5.95f;       // ~25%+ charge
+constexpr float BATTERY_6V_GEL_LOW = 5.7f;         // Depleted, charge soon
+
+// 6V critical threshold - same for all chemistries (damage risk)
+constexpr float BATTERY_6V_CRITICAL = 5.4f;        // Risk of damage, disable feeds
+
+// Threshold for auto-detecting 6V vs 12V battery
+constexpr float BATTERY_TYPE_THRESHOLD = 9.0f;     // > 9V = 12V battery, <= 9V = 6V battery
+
+// Solar panel charging detection threshold
+// If solar panel voltage exceeds this, charging is detected
+// A 12V panel will produce ~17V open circuit, ~14V under load
+constexpr float SOLAR_CHARGING_THRESHOLD = 5.0f;
 
 // =============================================================================
 // WiFi Settings
@@ -220,3 +299,52 @@ constexpr char PREF_BATTERY_TYPE[] = "battType";
 // LittleFS paths
 constexpr char SCHEDULES_FILE[] = "/schedules.json";
 constexpr char BLE_SCHEDULES_FILE[] = "/ble_schedules.json";
+constexpr char FEED_HISTORY_FILE[] = "/feed_history.json";
+
+// =============================================================================
+// Time/Day String Constants
+// =============================================================================
+
+// Day name abbreviations (short form for compact display)
+inline const char* const DAY_ABBREV[] = {"Su", "M", "Tu", "W", "Th", "F", "Sa"};
+
+// Day names (3-letter form)
+inline const char* const DAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+// Month names (3-letter form)
+inline const char* const MONTH_NAMES[] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+};
+
+// =============================================================================
+// Day Bitmask Constants
+// =============================================================================
+
+constexpr uint8_t DAYS_ALL = 0x7F;        // All days (Sun-Sat, bits 0-6)
+constexpr uint8_t DAYS_WEEKDAYS = 0x3E;   // Mon-Fri (bits 1-5)
+constexpr uint8_t DAYS_WEEKENDS = 0x41;   // Sat-Sun (bits 0,6)
+
+// =============================================================================
+// Watchdog Timer
+// =============================================================================
+
+// Reset device if main loop hangs for this many seconds
+constexpr uint32_t WATCHDOG_TIMEOUT_SEC = 30;
+
+// =============================================================================
+// Manual Feed from Display
+// =============================================================================
+
+// Countdown before manual feed starts (seconds) - gives time to cancel
+constexpr uint8_t MANUAL_FEED_COUNTDOWN_SEC = 15;
+
+// Fixed motor duration for manual feed from display (seconds)
+constexpr uint8_t MANUAL_FEED_DURATION_SEC = 5;
+
+// =============================================================================
+// Debug/Diagnostics (defined in main.cpp)
+// =============================================================================
+
+// Get human-readable string for last reset reason
+extern const char* getResetReasonString();

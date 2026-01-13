@@ -4,8 +4,9 @@
 Battery battery;
 
 void Battery::begin() {
-    // Configure ADC pin
+    // Configure ADC pins
     pinMode(PIN_BATTERY_ADC, INPUT);
+    pinMode(PIN_SOLAR_ADC, INPUT);
 
     // Set ADC resolution to 12 bits
     analogReadResolution(12);
@@ -103,35 +104,102 @@ float Battery::readRawVoltage() {
     return batteryVoltage;
 }
 
-void Battery::updateStatus() {
-    // Get critical threshold based on battery type
-    float criticalVoltage = storage.getSettings().getCriticalVoltage();
+float Battery::readSolarVoltage() {
+    // Read ADC value (take multiple reads and average for noise reduction)
+    int rawSum = 0;
+    for (int i = 0; i < 4; i++) {
+        rawSum += analogRead(PIN_SOLAR_ADC);
+        delayMicroseconds(100);
+    }
+    int rawValue = rawSum / 4;
 
-    // Determine battery status using standard thresholds
-    if (voltage >= BATTERY_VOLTAGE_GOOD) {
+    // Convert to voltage at ADC pin
+    float adcVoltage = (rawValue / (float)ADC_MAX_VALUE) * ADC_REFERENCE_VOLTAGE;
+
+    // Apply voltage divider ratio to get actual solar panel voltage
+    // Using same divider ratio as battery (100K/27K)
+    float panelVoltage = adcVoltage * BATTERY_DIVIDER_RATIO;
+
+    return panelVoltage;
+}
+
+void Battery::updateStatus() {
+    // Auto-detect 6V vs 12V battery based on voltage
+    // Chemistry (SLA/AGM/GEL) comes from user settings
+    float thresholdGood, thresholdFair, thresholdLow, thresholdCritical;
+    bool is12V = (voltage > BATTERY_TYPE_THRESHOLD);
+    BatteryType batteryType = storage.getSettings().batteryType;
+
+    if (is12V) {
+        // 12V battery - select thresholds based on chemistry
+        thresholdCritical = BATTERY_12V_CRITICAL;  // Same for all chemistries
+        switch (batteryType) {
+            case BatteryType::AGM:
+                thresholdGood = BATTERY_12V_AGM_GOOD;
+                thresholdFair = BATTERY_12V_AGM_FAIR;
+                thresholdLow = BATTERY_12V_AGM_LOW;
+                break;
+            case BatteryType::GEL:
+                thresholdGood = BATTERY_12V_GEL_GOOD;
+                thresholdFair = BATTERY_12V_GEL_FAIR;
+                thresholdLow = BATTERY_12V_GEL_LOW;
+                break;
+            case BatteryType::SLA:
+            default:
+                thresholdGood = BATTERY_12V_SLA_GOOD;
+                thresholdFair = BATTERY_12V_SLA_FAIR;
+                thresholdLow = BATTERY_12V_SLA_LOW;
+                break;
+        }
+    } else {
+        // 6V battery - select thresholds based on chemistry
+        thresholdCritical = BATTERY_6V_CRITICAL;  // Same for all chemistries
+        switch (batteryType) {
+            case BatteryType::AGM:
+                thresholdGood = BATTERY_6V_AGM_GOOD;
+                thresholdFair = BATTERY_6V_AGM_FAIR;
+                thresholdLow = BATTERY_6V_AGM_LOW;
+                break;
+            case BatteryType::GEL:
+                thresholdGood = BATTERY_6V_GEL_GOOD;
+                thresholdFair = BATTERY_6V_GEL_FAIR;
+                thresholdLow = BATTERY_6V_GEL_LOW;
+                break;
+            case BatteryType::SLA:
+            default:
+                thresholdGood = BATTERY_6V_SLA_GOOD;
+                thresholdFair = BATTERY_6V_SLA_FAIR;
+                thresholdLow = BATTERY_6V_SLA_LOW;
+                break;
+        }
+    }
+
+    // Determine battery status
+    if (voltage >= thresholdGood) {
         status = BatteryStatus::GOOD;
-    } else if (voltage >= BATTERY_VOLTAGE_OKAY) {
-        status = BatteryStatus::OKAY;
-    } else if (voltage >= BATTERY_VOLTAGE_LOW) {
-        status = BatteryStatus::LOW_BATTERY;
-    } else if (voltage >= criticalVoltage) {
-        status = BatteryStatus::LOW_BATTERY;  // Still low, but not critical yet
+    } else if (voltage >= thresholdFair) {
+        status = BatteryStatus::FAIR;
+    } else if (voltage >= thresholdLow) {
+        status = BatteryStatus::POOR;
+    } else if (voltage >= thresholdCritical) {
+        status = BatteryStatus::POOR;  // Still low, but not critical yet
     } else {
         status = BatteryStatus::CRITICAL;
     }
 
-    // Detect charging: voltage above charging threshold
-    // Only consider charging if voltage is in valid battery range (>10V) and above threshold
-    charging = (voltage >= 10.0f) && (voltage >= BATTERY_CHARGING_THRESHOLD);
+    // Detect charging: read solar panel voltage directly
+    // Charging is detected when solar panel is producing voltage
+    solarVoltage = readSolarVoltage();
+    charging = (solarVoltage >= SOLAR_CHARGING_THRESHOLD);
 }
 
 const char* Battery::getStatusText() const {
     switch (status) {
         case BatteryStatus::GOOD:
             return "Good";
-        case BatteryStatus::OKAY:
-            return "Okay";
-        case BatteryStatus::LOW_BATTERY:
+        case BatteryStatus::FAIR:
+            return "Fair";
+        case BatteryStatus::POOR:
             return "Low";
         case BatteryStatus::CRITICAL:
             return "Critical";

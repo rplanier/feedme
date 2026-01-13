@@ -1,21 +1,19 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 #include "config.h"
 #include "buttons.h"
 #include "display.h"
 #include "motor.h"
 #include "battery.h"
 #include "storage.h"
-#include "wifi_manager.h"
-#include "webserver.h"
-#include "ble_manager.h"
+#include "radio_manager.h"
 #include "rtc_manager.h"
 
 // =============================================================================
 // State tracking
 // =============================================================================
-
-bool webServerActive = false;
 uint32_t lastActivityTime = 0;          // Last button press or interaction
 uint32_t lastStatusUpdate = 0;
 uint32_t lastScheduleCheck = 0;
@@ -26,12 +24,30 @@ constexpr uint32_t SCHEDULE_CHECK_INTERVAL = 10000;  // Check schedules every 10
 uint8_t lastExecutedScheduleDay = 0;
 uint32_t executedScheduleMask = 0;      // Bitmask of schedule IDs executed today
 
+// Last reset reason (stored at boot for debugging)
+static esp_reset_reason_t lastResetReason = ESP_RST_UNKNOWN;
+
+const char* getResetReasonString() {
+    switch (lastResetReason) {
+        case ESP_RST_POWERON:   return "Power-on";
+        case ESP_RST_EXT:       return "External reset";
+        case ESP_RST_SW:        return "Software reset";
+        case ESP_RST_PANIC:     return "Exception/panic";
+        case ESP_RST_INT_WDT:   return "Interrupt watchdog";
+        case ESP_RST_TASK_WDT:  return "Task watchdog";
+        case ESP_RST_WDT:       return "Other watchdog";
+        case ESP_RST_DEEPSLEEP: return "Deep sleep wake";
+        case ESP_RST_BROWNOUT:  return "Brownout";
+        case ESP_RST_SDIO:      return "SDIO reset";
+        default:                return "Unknown";
+    }
+}
+
 // =============================================================================
 // Forward declarations
 // =============================================================================
 
 void checkFeedSchedules();
-void checkBleSchedules();
 void updateActivityTimer();
 void handleSleepTimeout();
 void enterDeepSleep();
@@ -44,13 +60,19 @@ void formatNextFeedTime(char* buffer, size_t len);
 
 void setup() {
     Serial.begin(115200);
-    delay(500);
+    delay(2000);  // Wait for USB serial to be ready
+    Serial.println("\n\n*** BOOT START ***");
+    Serial.flush();
+
+    // Capture reset reason for debugging (before any other init that might change it)
+    lastResetReason = esp_reset_reason();
 
     // Check wake reason
     esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
 
     Serial.println("\n=== FeedMe ===");
     Serial.printf("Version: %s\n", FEEDME_VERSION);
+    Serial.printf("Reset reason: %s\n", getResetReasonString());
     Serial.printf("Wake reason: %d\n", wakeReason);
 
     // Initialize storage first (needed for device ID and schedules)
@@ -79,13 +101,12 @@ void setup() {
     Serial.println("Initializing motor...");
     motor.begin();
 
-    // Initialize WiFi manager (but don't start WiFi yet)
-    Serial.println("Initializing WiFi...");
-    wifiManager.begin(storage.getDeviceId());
-
-    // Initialize BLE manager
-    Serial.println("Initializing BLE...");
-    bleManager.begin(storage.getDeviceId());
+    // Initialize radio manager (handles both WiFi and BLE)
+    Serial.println("Initializing radio...");
+    radioManager.begin(storage.getDeviceId());
+    radioManager.setThrowCallback([]() {
+        motor.startThrow();
+    });
 
     // Handle wake reason
     switch (wakeReason) {
@@ -96,7 +117,7 @@ void setup() {
                 checkFeedSchedules();
             }
             // Check if we woke for a BLE window
-            checkBleSchedules();
+            radioManager.checkBleSchedules();
             break;
 
         case ESP_SLEEP_WAKEUP_EXT0:
@@ -108,6 +129,10 @@ void setup() {
         default:
             Serial.println("Cold boot or other wake reason");
             updateActivityTimer();
+            // Auto-enable WiFi on cold boot for easier initial setup
+            // The 5-minute idle timeout will shut it off automatically
+            Serial.println("Auto-starting WiFi for initial setup...");
+            radioManager.transitionToWifi();
             break;
     }
 
@@ -118,6 +143,16 @@ void setup() {
         executedScheduleMask = 0;
     }
 
+    // Initialize watchdog timer - reset device if main loop hangs
+    esp_task_wdt_config_t wdt_config = {
+        .timeout_ms = WATCHDOG_TIMEOUT_SEC * 1000,
+        .idle_core_mask = 0,
+        .trigger_panic = true
+    };
+    esp_task_wdt_init(&wdt_config);
+    esp_task_wdt_add(NULL);  // Add current task to watchdog
+    Serial.printf("Watchdog initialized (%lu sec timeout)\n", WATCHDOG_TIMEOUT_SEC);
+
     Serial.println("Setup complete!");
 }
 
@@ -126,6 +161,9 @@ void setup() {
 // =============================================================================
 
 void loop() {
+    // Feed watchdog at start of each loop iteration
+    esp_task_wdt_reset();
+
     uint32_t now = millis();
 
     // Update subsystems
@@ -133,26 +171,103 @@ void loop() {
     battery.update();
     motor.update();
 
-    // Check for button events - any button press resets activity timer
-    ButtonEvent event = buttons.getEvent();
-    if (event != ButtonEvent::NONE) {
+    // Drain ALL pending button events before refreshing display
+    // This allows rapid presses during e-paper refresh to skip intermediate screens
+    while (true) {
+        ButtonEvent event = buttons.getEvent();
+        if (event == ButtonEvent::NONE) break;
+
         updateActivityTimer();
+        // Debug: log button events
+        if (event == ButtonEvent::NEXT_PRESS) {
+            Serial.println("Button: NEXT_PRESS");
+        } else if (event == ButtonEvent::NEXT_HOLD) {
+            Serial.printf("Button: NEXT_HOLD (screen=%d)\n", static_cast<int>(display.getScreen()));
+        } else if (event == ButtonEvent::PREV_PRESS) {
+            Serial.println("Button: PREV_PRESS");
+        } else if (event == ButtonEvent::PREV_HOLD) {
+            Serial.println("Button: PREV_HOLD");
+        }
         display.handleButton(event);
     }
 
     // Check for WiFi toggle request from display (user held button on Connectivity screen)
     if (display.shouldToggleWifi()) {
         display.clearWifiToggleRequest();
-        if (wifiManager.isRunning()) {
+        if (radioManager.isWifiActive()) {
             Serial.println("User requested WiFi stop");
-            wifiManager.stop();
-            // Immediately restart BLE if it should be active
-            checkBleSchedules();
+            radioManager.transitionToBle();
         } else {
             Serial.println("User requested WiFi start");
-            wifiManager.start();
+            radioManager.transitionToWifi();
         }
-        display.invalidate();  // Force display update
+        // Force immediate status update so display shows new WiFi state
+        lastStatusUpdate = 0;
+    }
+
+    // Check for manual feed request from display (user held button on Overview screen)
+    // Manual feed always works - user is explicitly overriding any battery restrictions
+    if (display.shouldStartFeedCountdown()) {
+        display.clearFeedCountdownRequest();
+
+        Serial.println("Manual feed countdown starting...");
+
+        // Show initial warning on display
+        esp_task_wdt_reset();  // Reset before blocking display operation
+        display.showFeedCountdown(MANUAL_FEED_COUNTDOWN_SEC);
+        esp_task_wdt_reset();  // Reset after display operation
+
+        // Countdown with periodic display updates
+        bool cancelled = false;
+        for (int i = MANUAL_FEED_COUNTDOWN_SEC; i > 0 && !cancelled; i--) {
+            Serial.printf("Feed in %d...\n", i);
+            esp_task_wdt_reset();  // Keep watchdog happy
+
+            // Update display at key intervals (10s, 5s, 3s)
+            if (i == 10 || i == 5 || i == 3) {
+                display.showFeedCountdown(i);
+                esp_task_wdt_reset();  // Reset after display operation
+            }
+
+            // Check for button press to cancel (poll for 1 second)
+            uint32_t start = millis();
+            while (millis() - start < 1000) {
+                buttons.update();
+                ButtonEvent event = buttons.getEvent();
+                if (event == ButtonEvent::NEXT_PRESS || event == ButtonEvent::PREV_PRESS) {
+                    cancelled = true;
+                    Serial.println("Feed cancelled by button press");
+                    break;
+                }
+                delay(10);
+            }
+        }
+
+        if (cancelled) {
+            esp_task_wdt_reset();  // Reset before blocking display operation
+            display.showFeedCancelled();
+            esp_task_wdt_reset();  // Reset after display operation
+            // Brief delay to show message, with watchdog resets
+            for (int i = 0; i < 15; i++) {
+                delay(100);
+                esp_task_wdt_reset();
+            }
+        } else {
+            // Show feeding now warning
+            esp_task_wdt_reset();  // Reset before blocking display operation
+            display.showFeedingNow();
+            esp_task_wdt_reset();  // Reset after display operation
+
+            Serial.printf("Feeding now! (%d seconds)\n", MANUAL_FEED_DURATION_SEC);
+            motor.startThrow(MANUAL_FEED_DURATION_SEC);
+
+            // Log manual feed event to history
+            storage.logFeedEvent(MANUAL_FEED_DURATION_SEC, true, "");
+        }
+
+        // Update activity timer and force display refresh
+        updateActivityTimer();
+        display.forceFullRefresh();
     }
 
     // Check schedules periodically (only if time is synced)
@@ -161,66 +276,23 @@ void loop() {
         if (rtcManager.isTimeSynced()) {
             checkFeedSchedules();
         }
-        checkBleSchedules();
+        radioManager.checkBleSchedules();
     }
 
-    // Check for BLE wake request (user connected via BLE and sent wake command)
-    if (bleManager.hasWakeRequest()) {
-        Serial.println("Main loop: BLE wake request detected");
-        bleManager.clearWakeRequest();
-        if (!wifiManager.isRunning()) {
-            Serial.println("BLE wake request - starting WiFi");
-            // Fully deinit BLE before starting WiFi (release radio)
-            bleManager.deinit();
-            delay(500);  // Let radio fully settle
-            wifiManager.start();
-            updateActivityTimer();
-        } else {
-            Serial.println("WiFi already running, ignoring wake request");
-        }
-    }
+    // Update radio manager (handles BLE wake requests, WiFi idle timeout, etc.)
+    radioManager.update();
 
-    // Update BLE manager
-    bleManager.update();
-
-    // Handle WiFi state
-    if (wifiManager.isRunning()) {
-        wifiManager.update();
-
-        // Start webserver if WiFi is running but server isn't
-        if (!webServerActive) {
-            webServer.begin();
-            webServer.setThrowCallback([]() {
-                motor.startThrow();  // Uses default duration
-            });
-            webServerActive = true;
-            Serial.println("WebServer started");
-        }
-
-        // Auto-stop WiFi after 5 minutes of inactivity (no API requests)
-        if (wifiManager.shouldAutoStop()) {
-            Serial.println("WiFi idle timeout - stopping");
-            wifiManager.stop();
-            // Immediately restart BLE if it should be active
-            checkBleSchedules();
-        }
-    } else if (webServerActive) {
-        webServer.stop();
-        webServerActive = false;
-        Serial.println("WebServer stopped");
-        // Immediately restart BLE if it should be active
-        checkBleSchedules();
-    }
-
-    // Update display status periodically
-    if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
+    // Update display status periodically, or immediately if requested (e.g., after settings change)
+    if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL || display.needsStatusUpdate()) {
         lastStatusUpdate = now;
+        display.clearStatusUpdateFlag();
 
         StatusData status = {};
 
-        // Time
-        rtcManager.formatTime(status.currentTime, sizeof(status.currentTime));
-        rtcManager.formatDate(status.currentDate, sizeof(status.currentDate));
+        // Time (convert UTC to local for display)
+        int16_t tzOffset = storage.getSettings().timezoneOffset;
+        rtcManager.formatTimeLocal(status.currentTime, sizeof(status.currentTime), tzOffset);
+        rtcManager.formatDateLocal(status.currentDate, sizeof(status.currentDate), tzOffset);
 
         // Battery
         status.batteryVoltage = battery.getVoltage();
@@ -228,18 +300,18 @@ void loop() {
         status.batteryStatus = battery.getStatusText();
 
         // Connectivity
-        status.wifiEnabled = wifiManager.isRunning();
-        status.wifiClientConnected = wifiManager.getClientCount() > 0;
-        status.bleEnabled = bleManager.isRunning();
-        status.bleClientConnected = bleManager.isClientConnected();
+        status.wifiEnabled = radioManager.isWifiActive();
+        status.wifiClientConnected = radioManager.isWifiClientConnected();
+        status.bleEnabled = radioManager.isBleActive();
+        status.bleClientConnected = radioManager.isBleClientConnected();
 
         // Status flags
         status.vacationMode = storage.getSettings().vacationMode;
         status.timeSynced = rtcManager.isTimeSynced();
 
         // WiFi credentials for connectivity screen
-        strncpy(status.wifiSSID, wifiManager.getSSID(), sizeof(status.wifiSSID) - 1);
-        strncpy(status.wifiPassword, wifiManager.getPassword(), sizeof(status.wifiPassword) - 1);
+        strncpy(status.wifiSSID, radioManager.getWifiSSID(), sizeof(status.wifiSSID) - 1);
+        strncpy(status.wifiPassword, radioManager.getWifiPassword(), sizeof(status.wifiPassword) - 1);
 
         // Next feed time
         formatNextFeedTime(status.nextFeedTime, sizeof(status.nextFeedTime));
@@ -250,6 +322,18 @@ void loop() {
 
     // Update display (e-ink updates only when needed)
     display.update();
+
+    // Check if we should enter screensaver mode (after 60s of button inactivity)
+    display.checkScreensaver();
+
+    // Process any button events captured during display refresh immediately
+    buttons.update();
+    while (buttons.hasEvent()) {
+        ButtonEvent event = buttons.getEvent();
+        if (event == ButtonEvent::NONE) break;
+        updateActivityTimer();
+        display.handleButton(event);
+    }
 
     // Handle sleep timeout
     handleSleepTimeout();
@@ -275,13 +359,8 @@ void handleSleepTimeout() {
         return;
     }
 
-    // Don't sleep if WiFi is running (has its own idle timeout)
-    if (wifiManager.isRunning()) {
-        return;
-    }
-
-    // Don't sleep if BLE is running - stay awake to receive connections
-    if (bleManager.isRunning()) {
+    // Don't sleep if WiFi or BLE is running
+    if (radioManager.getMode() != RadioManager::Mode::IDLE) {
         return;
     }
 
@@ -507,26 +586,12 @@ void checkFeedSchedules() {
             uint8_t duration = sched->duration > 0 ? sched->duration : motor.getDefaultDuration();
             motor.startThrow(duration);
 
+            // Log feed event to history
+            storage.logFeedEvent(duration, false, sched->name);
+
             // Keep display/activity alive during motor run
             updateActivityTimer();
         }
-    }
-}
-
-// =============================================================================
-// BLE schedule checking
-// =============================================================================
-
-void checkBleSchedules() {
-    bool shouldBeActive = storage.shouldBleBeActive();
-
-    // Don't start BLE while WiFi is running (radio coexistence)
-    if (shouldBeActive && !bleManager.isRunning() && !wifiManager.isRunning()) {
-        Serial.println("BLE schedule active - starting BLE");
-        bleManager.start();
-    } else if (!shouldBeActive && bleManager.isRunning()) {
-        Serial.println("BLE schedule inactive - stopping BLE");
-        bleManager.stop();
     }
 }
 
@@ -535,7 +600,11 @@ void checkBleSchedules() {
 // =============================================================================
 
 void formatNextFeedTime(char* buffer, size_t len) {
-    static const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    // If battery is critical, scheduled feeds are skipped - show this instead of a time
+    if (battery.getStatus() == BatteryStatus::CRITICAL) {
+        strncpy(buffer, "Battery Low", len);
+        return;
+    }
 
     // Default to "None" if no valid schedule found
     strncpy(buffer, "None", len);
@@ -585,11 +654,16 @@ void formatNextFeedTime(char* buffer, size_t len) {
     }
 
     if (nearestDay >= 0) {
+        // Convert UTC hour to local time for display
+        int16_t tzOffset = storage.getSettings().timezoneOffset;
+        int localHour = nearestHour - (tzOffset / 60);
+        localHour = (localHour + 24) % 24;
+
         // Format as "Today HH:MM" or "Mon HH:MM"
         if (nearestDay == currentDay && nearestSeconds < 86400) {
-            snprintf(buffer, len, "Today %02d:%02d", nearestHour, nearestMinute);
+            snprintf(buffer, len, "Today %02d:%02d", localHour, nearestMinute);
         } else {
-            snprintf(buffer, len, "%s %02d:%02d", days[nearestDay], nearestHour, nearestMinute);
+            snprintf(buffer, len, "%s %02d:%02d", DAY_NAMES[nearestDay], localHour, nearestMinute);
         }
     }
 }

@@ -48,10 +48,19 @@ public:
     // For future DS3231: check if RTC lost power
     bool lostPower() const;
 
-    // Format helpers
+    // Format helpers (UTC time from RTC)
     void formatTime(char* buffer, size_t len);       // "HH:MM"
     void formatDate(char* buffer, size_t len);       // "Mon Jan 01"
     void formatDateTime(char* buffer, size_t len);   // "Mon Jan 01 HH:MM"
+
+    // Format helpers with timezone conversion (UTC -> Local)
+    // tzOffset is minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
+    void formatTimeLocal(char* buffer, size_t len, int16_t tzOffset);
+    void formatDateLocal(char* buffer, size_t len, int16_t tzOffset);
+    void formatDateTimeLocal(char* buffer, size_t len, int16_t tzOffset);
+
+    // Get local DateTime (applies timezone offset)
+    DateTime nowLocal(int16_t tzOffset);
 
 private:
     bool initialized = false;

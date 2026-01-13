@@ -5,8 +5,8 @@
 
 enum class BatteryStatus {
     GOOD,
-    OKAY,
-    LOW_BATTERY,
+    FAIR,
+    POOR,
     CRITICAL
 };
 
@@ -17,6 +17,7 @@ public:
 
     // Get current readings
     float getVoltage() const { return voltage; }
+    float getSolarVoltage() const { return solarVoltage; }
     BatteryStatus getStatus() const { return status; }
     const char* getStatusText() const;
     bool isCharging() const { return charging; }
@@ -27,7 +28,8 @@ public:
 private:
     float voltage = 0.0f;
     float previousVoltage = 0.0f;
-    BatteryStatus status = BatteryStatus::OKAY;
+    float solarVoltage = 0.0f;
+    BatteryStatus status = BatteryStatus::FAIR;
     bool charging = false;
 
     uint32_t lastReadTime = 0;
@@ -40,6 +42,7 @@ private:
     bool samplesReady = false;
 
     float readRawVoltage();
+    float readSolarVoltage();
     void updateStatus();
 };
 

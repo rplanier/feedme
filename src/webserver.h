@@ -5,6 +5,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include "config.h"
+#include "display.h"
 
 // Forward declarations
 class Storage;
@@ -15,7 +16,7 @@ class Battery;
 typedef void (*ThrowCallback)();
 typedef void (*TimeUpdateCallback)(uint32_t epoch);
 
-class WebServer {
+class FeedMeWebServer {
 public:
     void begin();
     void stop();
@@ -41,6 +42,7 @@ private:
     void setupRoutes();
     void setupStaticFiles();
     void setupAPI();
+    void setupCaptivePortal();
 
     // API handlers
     void handleGetStatus(AsyncWebServerRequest* request);
@@ -59,4 +61,4 @@ private:
     void sendError(AsyncWebServerRequest* request, int code, const char* message);
 };
 
-extern WebServer webServer;
+extern FeedMeWebServer webServer;

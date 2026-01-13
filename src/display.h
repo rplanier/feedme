@@ -10,16 +10,15 @@
 #include "config.h"
 #include "buttons.h"
 
-// Display type for 2.9" Waveshare (296x128)
-// Using GxEPD2_290_T94_V2 which is compatible with most 2.9" black/white displays
-typedef GxEPD2_BW<GxEPD2_290_T94_V2, GxEPD2_290_T94_V2::HEIGHT> EPD_Class;
+// Display type for 2.9" Waveshare V2 (296x128, Rev2.1) - SSD1680 controller
+typedef GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT> EPD_Class;
 
 // UI Screen states (simplified - read-only except WiFi toggle)
 enum class Screen {
     OVERVIEW,       // Time, battery, next feed, warnings
-    SCHEDULES,      // Read-only feed schedule list
     CONNECTIVITY,   // WiFi/BLE status, QR code, toggle WiFi
-    SETTINGS,       // Read-only settings display
+    FEED_SCHEDULES, // Read-only feed schedule list
+    BLE_SCHEDULES,  // Read-only BLE schedule list
     ABOUT           // Version, device ID
 };
 
@@ -60,8 +59,37 @@ public:
     void setScreen(Screen screen);
     Screen getScreen() const { return currentScreen; }
 
-    // Force redraw on next update
+    // Force redraw on next update (partial refresh)
     void invalidate() { needsRedraw = true; }
+
+    // Force full refresh on next update (use for content changes to avoid ghosting)
+    void forceFullRefresh() { needsRedraw = true; partialRefreshCount = PARTIAL_REFRESH_LIMIT; statusUpdateNeeded = true; }
+
+    // Conditional refresh - only refresh if current screen shows relevant data
+    void refreshIfFeedSchedulesAffected() {
+        if (currentScreen == Screen::OVERVIEW || currentScreen == Screen::FEED_SCHEDULES) {
+            forceFullRefresh();
+        }
+    }
+    void refreshIfBleSchedulesAffected() {
+        if (currentScreen == Screen::OVERVIEW || currentScreen == Screen::BLE_SCHEDULES) {
+            forceFullRefresh();
+        }
+    }
+    void refreshIfSettingsAffected() {
+        if (currentScreen == Screen::OVERVIEW) {
+            forceFullRefresh();
+        }
+    }
+    void refreshIfTimeAffected() {
+        if (currentScreen == Screen::OVERVIEW) {
+            forceFullRefresh();
+        }
+    }
+
+    // Check if status update is needed before refresh
+    bool needsStatusUpdate() const { return statusUpdateNeeded; }
+    void clearStatusUpdateFlag() { statusUpdateNeeded = false; }
 
     // Update status data
     void setStatus(const StatusData& newStatus);
@@ -70,12 +98,31 @@ public:
     bool shouldToggleWifi() const { return wifiToggleRequested; }
     void clearWifiToggleRequest() { wifiToggleRequested = false; }
 
+    // Feed countdown warning display
+    void showFeedCountdown(int secondsRemaining);  // Show countdown warning
+    void showFeedingNow();                          // Show "feeding now" message
+    void showFeedCancelled();                       // Show cancelled message
+
+    // Request manual feed countdown (called from button handler on Overview screen)
+    bool shouldStartFeedCountdown() const { return feedCountdownRequested; }
+    void clearFeedCountdownRequest() { feedCountdownRequested = false; }
+
+    // Screensaver - reduces e-paper refresh cycles when idle
+    void checkScreensaver();
+    bool isScreensaverActive() const { return screensaverActive; }
+
 private:
-    EPD_Class epd = EPD_Class(GxEPD2_290_T94_V2(PIN_EPD_CS, PIN_EPD_DC, PIN_EPD_RST, PIN_EPD_BUSY));
+    EPD_Class epd = EPD_Class(GxEPD2_290_BS(PIN_EPD_CS, PIN_EPD_DC, PIN_EPD_RST, PIN_EPD_BUSY));
 
     Screen currentScreen = Screen::OVERVIEW;
     bool needsRedraw = true;
     bool wifiToggleRequested = false;
+    bool feedCountdownRequested = false;
+    bool statusUpdateNeeded = false;
+
+    // Screensaver state
+    bool screensaverActive = false;
+    uint32_t lastButtonActivityTime = 0;
 
     // Partial refresh counter - do full refresh periodically
     uint8_t partialRefreshCount = 0;
@@ -89,9 +136,9 @@ private:
 
     // Drawing methods for each screen
     void drawOverviewScreen();
-    void drawSchedulesScreen();
+    void drawFeedSchedulesScreen();
+    void drawBleSchedulesScreen();
     void drawConnectivityScreen();
-    void drawSettingsScreen();
     void drawAboutScreen();
 
     // Helper drawing methods
@@ -106,6 +153,7 @@ private:
     // Refresh helpers
     void doFullRefresh();
     void doPartialRefresh();
+    void drawScreensaver();
 };
 
 extern Display display;

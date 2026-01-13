@@ -1,6 +1,8 @@
 #include "display.h"
 #include "storage.h"
 #include "rtc_manager.h"
+#include "buttons.h"
+#include "icons.h"
 #include <qrcode.h>
 
 Display display;
@@ -9,37 +11,55 @@ Display display;
 constexpr int NUM_SCREENS = 5;
 
 void Display::begin() {
-    // Initialize SPI for e-paper
+    // Initialize SPI with custom pins (required for ESP32-C6 with non-default pins)
     SPI.begin(PIN_EPD_CLK, -1, PIN_EPD_MOSI, PIN_EPD_CS);
 
     // Initialize display
     epd.init(115200, true, 50, false);  // serial debug, initial reset, reset duration, pulldown RST
 
-    // Set rotation (0 or 2 for landscape on 2.9")
-    epd.setRotation(0);
+    // Set rotation (0 = portrait, 3 = landscape with connector on right)
+    epd.setRotation(3);
 
     // Set text defaults
     epd.setTextColor(GxEPD_BLACK);
     epd.setFont(&FreeSans9pt7b);
 
-    // Initial full refresh with splash
+    // Initial full refresh with splash - deer icon + text
     epd.setFullWindow();
     epd.firstPage();
     do {
         epd.fillScreen(GxEPD_WHITE);
+
+        // Draw deer icon on left side, vertically centered
+        int iconX = 10;
+        int iconY = (SCREEN_HEIGHT - DEER_ICON_HEIGHT) / 2;
+        epd.drawBitmap(iconX, iconY, DEER_ICON, DEER_ICON_WIDTH, DEER_ICON_HEIGHT, GxEPD_BLACK);
+
+        // "FeedMe" text to the right of icon
+        int16_t x1, y1;
+        uint16_t w, h;
+        int textX = iconX + DEER_ICON_WIDTH + 15;
+
         epd.setFont(&FreeSansBold18pt7b);
-        epd.setCursor(80, 70);
+        epd.setCursor(textX, 55);
         epd.print("FeedMe");
+
+        // Version below
         epd.setFont(&FreeSans9pt7b);
-        epd.setCursor(100, 100);
-        epd.print("v");
-        epd.print(FEEDME_VERSION);
+        char verStr[16];
+        snprintf(verStr, sizeof(verStr), "v%s", FEEDME_VERSION);
+        epd.setCursor(textX, 80);
+        epd.print(verStr);
     } while (epd.nextPage());
 
     delay(1000);
 
     Serial.println("Display: E-paper initialized");
     needsRedraw = true;
+    // Force full refresh for first screen draw (partial refresh doesn't work on this display)
+    partialRefreshCount = PARTIAL_REFRESH_LIMIT;
+    // Initialize screensaver timer so it doesn't trigger immediately on boot
+    lastButtonActivityTime = millis();
 }
 
 void Display::update() {
@@ -62,20 +82,23 @@ void Display::doFullRefresh() {
     epd.setFullWindow();
     epd.firstPage();
     do {
+        // Poll buttons during refresh so presses are queued
+        buttons.update();
+
         epd.fillScreen(GxEPD_WHITE);
 
         switch (currentScreen) {
             case Screen::OVERVIEW:
                 drawOverviewScreen();
                 break;
-            case Screen::SCHEDULES:
-                drawSchedulesScreen();
+            case Screen::FEED_SCHEDULES:
+                drawFeedSchedulesScreen();
+                break;
+            case Screen::BLE_SCHEDULES:
+                drawBleSchedulesScreen();
                 break;
             case Screen::CONNECTIVITY:
                 drawConnectivityScreen();
-                break;
-            case Screen::SETTINGS:
-                drawSettingsScreen();
                 break;
             case Screen::ABOUT:
                 drawAboutScreen();
@@ -85,29 +108,72 @@ void Display::doFullRefresh() {
 }
 
 void Display::doPartialRefresh() {
-    epd.setPartialWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-    epd.firstPage();
-    do {
-        epd.fillScreen(GxEPD_WHITE);
+    // For Overview screen, try targeted partial refresh on time area
+    if (currentScreen == Screen::OVERVIEW) {
+        // Calculate time area position (depends on warning banners)
+        int yOffset = 24;  // Header height
+        if (!status.timeSynced) yOffset += 16;
+        if (status.vacationMode) yOffset += 16;
 
-        switch (currentScreen) {
-            case Screen::OVERVIEW:
-                drawOverviewScreen();
-                break;
-            case Screen::SCHEDULES:
-                drawSchedulesScreen();
-                break;
-            case Screen::CONNECTIVITY:
-                drawConnectivityScreen();
-                break;
-            case Screen::SETTINGS:
-                drawSettingsScreen();
-                break;
-            case Screen::ABOUT:
-                drawAboutScreen();
-                break;
-        }
-    } while (epd.nextPage());
+        // Time display area: x=10, y=yOffset, width=140, height=32
+        // Round to 8-pixel boundary as required by many e-paper controllers
+        int timeY = yOffset;
+        int timeHeight = 32;
+
+        // Use targeted partial window for just the time area
+        epd.setPartialWindow(0, timeY, 165, timeHeight);
+        epd.firstPage();
+        do {
+            // Poll buttons during refresh so presses are queued
+            buttons.update();
+
+            // Clear just this region
+            epd.fillRect(0, timeY, 160, timeHeight, GxEPD_WHITE);
+
+            // Draw time (12-hour format)
+            epd.setFont(&FreeSansBold18pt7b);
+            epd.setTextColor(GxEPD_BLACK);
+            epd.setCursor(5, timeY + 28);
+
+            int hour = (status.currentTime[0] - '0') * 10 + (status.currentTime[1] - '0');
+            bool isPM = hour >= 12;
+            int hour12 = hour % 12;
+            if (hour12 == 0) hour12 = 12;
+
+            char time12[12];
+            snprintf(time12, sizeof(time12), "%d:%c%c %s",
+                     hour12, status.currentTime[3], status.currentTime[4],
+                     isPM ? "PM" : "AM");
+            epd.print(time12);
+        } while (epd.nextPage());
+    } else {
+        // For other screens, do full partial refresh
+        epd.setPartialWindow(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        epd.firstPage();
+        do {
+            // Poll buttons during refresh so presses are queued
+            buttons.update();
+
+            epd.fillScreen(GxEPD_WHITE);
+
+            switch (currentScreen) {
+                case Screen::FEED_SCHEDULES:
+                    drawFeedSchedulesScreen();
+                    break;
+                case Screen::BLE_SCHEDULES:
+                    drawBleSchedulesScreen();
+                    break;
+                case Screen::CONNECTIVITY:
+                    drawConnectivityScreen();
+                    break;
+                case Screen::ABOUT:
+                    drawAboutScreen();
+                    break;
+                default:
+                    break;
+            }
+        } while (epd.nextPage());
+    }
 }
 
 void Display::setScreen(Screen screen) {
@@ -116,20 +182,58 @@ void Display::setScreen(Screen screen) {
         scrollOffset = 0;
         scrollMode = false;
         needsRedraw = true;
+        // Force full refresh on screen change to clear previous content
+        partialRefreshCount = PARTIAL_REFRESH_LIMIT;
     }
 }
 
 void Display::setStatus(const StatusData& newStatus) {
+    // Skip time-based redraws while in screensaver (reduces unnecessary refreshes)
+    if (screensaverActive) {
+        status = newStatus;  // Still update cached status
+        return;
+    }
+
+    // Trigger redraw if time changed - but only on Overview screen which shows time
+    if (strncmp(status.currentTime, newStatus.currentTime, 5) != 0) {
+        if (currentScreen == Screen::OVERVIEW) {
+            needsRedraw = true;
+            partialRefreshCount = PARTIAL_REFRESH_LIMIT;
+        }
+    }
+
+    // Trigger redraw if WiFi state changed while on Connectivity screen
+    if (status.wifiEnabled != newStatus.wifiEnabled) {
+        if (currentScreen == Screen::CONNECTIVITY) {
+            needsRedraw = true;
+            partialRefreshCount = PARTIAL_REFRESH_LIMIT;
+        }
+    }
+
     status = newStatus;
 }
 
 void Display::handleButton(ButtonEvent event) {
+    // Any button activity resets screensaver timer
+    lastButtonActivityTime = millis();
+
+    // Wake from screensaver on any button press - go to Overview
+    if (screensaverActive) {
+        screensaverActive = false;
+        currentScreen = Screen::OVERVIEW;  // Always wake to Overview
+        needsRedraw = true;
+        partialRefreshCount = PARTIAL_REFRESH_LIMIT;  // Full refresh to clear screensaver
+        return;  // Don't process as navigation
+    }
+
     if (scrollMode) {
         // In scroll mode, buttons scroll the list
         int maxScroll = 0;  // Will be set based on current screen
 
-        if (currentScreen == Screen::SCHEDULES) {
+        if (currentScreen == Screen::FEED_SCHEDULES) {
             maxScroll = max(0, (int)storage.getScheduleCount() - 3);  // Show 3 items at a time
+        } else if (currentScreen == Screen::BLE_SCHEDULES) {
+            maxScroll = max(0, (int)storage.getBleScheduleCount() - 3);
         }
 
         switch (event) {
@@ -184,15 +288,27 @@ void Display::handleButton(ButtonEvent event) {
 
             case ButtonEvent::NEXT_HOLD:
                 // Context action based on screen
-                if (currentScreen == Screen::SCHEDULES) {
-                    // Enter scroll mode
+                if (currentScreen == Screen::OVERVIEW) {
+                    // Request manual feed countdown - main loop will handle the countdown
+                    feedCountdownRequested = true;
+                    // Don't redraw - main.cpp will handle countdown display
+                } else if (currentScreen == Screen::FEED_SCHEDULES) {
+                    // Enter scroll mode for feed schedules
                     if (storage.getScheduleCount() > 3) {
+                        scrollMode = true;
+                        needsRedraw = true;
+                    }
+                } else if (currentScreen == Screen::BLE_SCHEDULES) {
+                    // Enter scroll mode for BLE schedules
+                    if (storage.getBleScheduleCount() > 3) {
                         scrollMode = true;
                         needsRedraw = true;
                     }
                 } else if (currentScreen == Screen::CONNECTIVITY) {
                     // Toggle WiFi
                     wifiToggleRequested = true;
+                    needsRedraw = true;
+                    partialRefreshCount = PARTIAL_REFRESH_LIMIT;  // Force full refresh
                 }
                 break;
 
@@ -217,171 +333,165 @@ void Display::drawOverviewScreen() {
 
     // Warning banner if time not synced
     if (!status.timeSynced) {
-        drawWarningBanner("! Time not synced - Connect WiFi");
+        drawWarningBanner("Time not synced");
     }
 
     // Vacation mode banner
     if (status.vacationMode) {
-        int bannerY = status.timeSynced ? 22 : 42;
-        epd.fillRect(0, bannerY, SCREEN_WIDTH, 18, GxEPD_BLACK);
+        int bannerY = status.timeSynced ? 24 : 40;  // Below header (24px) or warning (24+16=40)
+        epd.fillRect(0, bannerY, SCREEN_WIDTH, 16, GxEPD_BLACK);
         epd.setTextColor(GxEPD_WHITE);
-        epd.setFont(&FreeSans9pt7b);
-        epd.setCursor(70, bannerY + 14);
+        epd.setFont(&FreeMono9pt7b);
+        int16_t x1, y1;
+        uint16_t w, h;
+        epd.getTextBounds("VACATION MODE", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, bannerY + 12);
         epd.print("VACATION MODE");
         epd.setTextColor(GxEPD_BLACK);
     }
 
-    int yOffset = 22;
-    if (!status.timeSynced) yOffset += 20;
-    if (status.vacationMode) yOffset += 20;
+    int yOffset = 24;  // Start below header
+    if (!status.timeSynced) yOffset += 16;  // Warning banner height
+    if (status.vacationMode) yOffset += 16;  // Vacation banner height
 
-    // Large time display
+    // Large time display (convert to 12-hour format)
     epd.setFont(&FreeSansBold18pt7b);
-    epd.setCursor(10, yOffset + 28);
-    epd.print(status.currentTime);
+    epd.setCursor(5, yOffset + 34);
+
+    // Parse hour from status.currentTime (format "HH:MM" or "HH:MM:SS")
+    int hour = (status.currentTime[0] - '0') * 10 + (status.currentTime[1] - '0');
+    bool isPM = hour >= 12;
+    int hour12 = hour % 12;
+    if (hour12 == 0) hour12 = 12;
+
+    char time12[12];
+    snprintf(time12, sizeof(time12), "%d:%c%c %s",
+             hour12, status.currentTime[3], status.currentTime[4],
+             isPM ? "PM" : "AM");
+    epd.print(time12);
 
     // Date
-    epd.setFont(&FreeSans9pt7b);
-    epd.setCursor(150, yOffset + 23);
+    epd.setFont(&FreeMono9pt7b);
+    epd.setCursor(170, yOffset + 26);
     epd.print(status.currentDate);
 
     // Battery info
-    epd.setCursor(10, yOffset + 53);
-    epd.print("Battery: ");
+    epd.setCursor(5, yOffset + 56);
+    epd.print("Batt: ");
     epd.print(status.batteryVoltage, 1);
-    epd.print("V (");
+    epd.print("V ");
     epd.print(status.batteryStatus);
-    epd.print(")");
     if (status.isCharging) {
         epd.print(" CHG");
     }
 
     // Next feed time
-    epd.setCursor(10, yOffset + 73);
-    epd.print("Next Feed: ");
+    epd.setCursor(5, yOffset + 74);
+    epd.print("Next: ");
     epd.print(status.nextFeedTime);
+
+    // Action hint at bottom (only if no banners pushing content down)
+    if (status.timeSynced && !status.vacationMode) {
+        epd.setCursor(5, 122);
+        epd.print("Hold to test feed now");
+    }
 }
 
-void Display::drawSchedulesScreen() {
+void Display::drawFeedSchedulesScreen() {
     drawHeader("Feed Schedules");
 
     int scheduleCount = storage.getScheduleCount();
 
     if (scheduleCount == 0) {
-        epd.setFont(&FreeSans9pt7b);
-        epd.setCursor(50, 70);
+        epd.setFont(&FreeMono9pt7b);
+        int16_t x1, y1;
+        uint16_t w, h;
+
+        epd.getTextBounds("No schedules configured", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 65);
         epd.print("No schedules configured");
-        epd.setCursor(55, 90);
-        epd.print("Use WiFi to add schedules");
+
+        epd.getTextBounds("Use WiFi to add", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 83);
+        epd.print("Use WiFi to add");
         return;
     }
 
-    // Display schedules (3 visible at a time)
-    int visibleCount = min(3, scheduleCount - scrollOffset);
-    int y = 30;
+    // Display schedules (4 visible at a time with compact layout)
+    int visibleCount = min(4, scheduleCount - scrollOffset);
+    int y = 42;  // Start below 24px header + margin
+
+    // Use monospace font for aligned columns
+    epd.setFont(&FreeMono9pt7b);
 
     for (int i = 0; i < visibleCount; i++) {
         int scheduleIdx = scrollOffset + i;
         Schedule* sched = storage.getSchedule(scheduleIdx);
         if (sched) {
             Schedule& schedule = *sched;
-            // Schedule row
-            epd.setFont(&FreeSans9pt7b);
 
-            // Time
-            epd.setCursor(5, y + 15);
-            char timeStr[8];
-            snprintf(timeStr, sizeof(timeStr), "%02d:%02d", schedule.hour, schedule.minute);
-            epd.print(timeStr);
+            // Format: "07:00 Daily    5s ON"  or "07:00 S-T-T-- 10s OFF"
+            char line[32];
+            char daysStr[8];
 
-            // Days (abbreviated)
-            epd.setCursor(65, y + 15);
-            if (schedule.days == 0x7F) {
-                epd.print("Daily");
+            if (schedule.days == DAYS_ALL) {
+                strcpy(daysStr, "Daily ");
             } else {
                 const char* dayLetters = "SMTWTFS";
                 for (int d = 0; d < 7; d++) {
-                    if (schedule.days & (1 << d)) {
-                        epd.print(dayLetters[d]);
-                    } else {
-                        epd.print("-");
-                    }
+                    daysStr[d] = (schedule.days & (1 << d)) ? dayLetters[d] : '-';
                 }
+                daysStr[7] = '\0';
             }
 
-            // Duration
-            epd.setCursor(140, y + 15);
-            if (schedule.duration > 0) {
-                epd.print(schedule.duration);
-                epd.print("s");
-            } else {
-                epd.print("Def");
-            }
+            int dur = (schedule.duration > 0) ? schedule.duration : storage.getSettings().motorDuration;
+            // Convert UTC hour to local for display
+            uint8_t localHour = schedule.getLocalHour(storage.getSettings().timezoneOffset);
+            snprintf(line, sizeof(line), "%02d:%02d %s %2ds %s",
+                     localHour, schedule.minute,
+                     daysStr, dur,
+                     schedule.enabled ? "ON" : "--");
 
-            // Enabled indicator
-            epd.setCursor(185, y + 15);
-            epd.print(schedule.enabled ? "[ON]" : "[off]");
+            epd.setCursor(5, y);
+            epd.print(line);
 
-            // Name (truncated)
-            if (strlen(schedule.name) > 0) {
-                epd.setCursor(230, y + 15);
-                char truncName[8];
-                strncpy(truncName, schedule.name, 7);
-                truncName[7] = '\0';
-                epd.print(truncName);
-            }
-
-            // Separator line
-            if (i < visibleCount - 1) {
-                epd.drawLine(5, y + 25, SCREEN_WIDTH - 10, y + 25, GxEPD_BLACK);
-            }
-
-            y += 30;
+            y += 18;
         }
     }
 
-    // Scroll indicators and hint
-    if (scheduleCount > 3) {
-        drawScrollIndicator(scrollOffset, scheduleCount - 3);
-
-        epd.setFont(&FreeSans9pt7b);
+    // Scroll hint at bottom
+    if (scheduleCount > 4) {
+        drawScrollIndicator(scrollOffset, scheduleCount - 4);
         epd.setCursor(5, 122);
-        if (scrollMode) {
-#if SINGLE_BUTTON_MODE
-            epd.print("[Scrolling] Hold to exit");
-#else
-            epd.print("[Scrolling] Hold PREV to exit");
-#endif
-        } else {
-#if SINGLE_BUTTON_MODE
-            epd.print("Hold to scroll");
-#else
-            epd.print("Hold NEXT to scroll");
-#endif
-        }
+        epd.print(scrollMode ? "Scrolling - Hold to exit" : "Hold to scroll");
     }
 }
 
 void Display::drawConnectivityScreen() {
     drawHeader("Connectivity");
 
-    int y = 28;
+    epd.setFont(&FreeMono9pt7b);
+    int y = 42;  // Start below 24px header + margin
 
     // WiFi section
-    epd.setFont(&FreeSansBold12pt7b);
-    epd.setCursor(5, y + 14);
+    epd.setCursor(5, y);
     epd.print("WiFi: ");
-    epd.setFont(&FreeSans9pt7b);
     epd.print(status.wifiEnabled ? (status.wifiClientConnected ? "Connected" : "On") : "Off");
 
+    // BLE section (right after WiFi)
+    y += 18;
+    epd.setCursor(5, y);
+    epd.print("BLE:  ");
+    epd.print(status.bleEnabled ? (status.bleClientConnected ? "Connected" : "Advertising") : "Off");
+
     if (status.wifiEnabled) {
-        y += 22;
-        epd.setCursor(10, y + 12);
+        y += 18;
+        epd.setCursor(5, y);
         epd.print("SSID: ");
         epd.print(status.wifiSSID);
 
         y += 18;
-        epd.setCursor(10, y + 12);
+        epd.setCursor(5, y);
         epd.print("Pass: ");
         epd.print(status.wifiPassword);
 
@@ -390,17 +500,9 @@ void Display::drawConnectivityScreen() {
             char wifiConfig[96];
             snprintf(wifiConfig, sizeof(wifiConfig), "WIFI:T:WPA;S:%s;P:%s;;",
                      status.wifiSSID, status.wifiPassword);
-            drawQRCode(210, 28, wifiConfig, 2);
+            drawQRCode(211, 25, wifiConfig, 3);
         }
     }
-
-    // BLE section
-    y = 88;
-    epd.setFont(&FreeSansBold12pt7b);
-    epd.setCursor(5, y + 14);
-    epd.print("BLE: ");
-    epd.setFont(&FreeSans9pt7b);
-    epd.print(status.bleEnabled ? (status.bleClientConnected ? "Connected" : "Advertising") : "Off");
 
     // Action hint
     epd.setCursor(5, 122);
@@ -411,71 +513,90 @@ void Display::drawConnectivityScreen() {
 #endif
 }
 
-void Display::drawSettingsScreen() {
-    drawHeader("Settings");
+void Display::drawBleSchedulesScreen() {
+    drawHeader("BLE Schedules");
 
-    int y = 38;
-    epd.setFont(&FreeSans9pt7b);
+    int scheduleCount = storage.getBleScheduleCount();
 
-    Settings& settings = storage.getSettings();
+    if (scheduleCount == 0) {
+        epd.setFont(&FreeMono9pt7b);
+        int16_t x1, y1;
+        uint16_t w, h;
 
-    // Motor duration
-    epd.setCursor(5, y);
-    epd.print("Motor Duration: ");
-    epd.print(settings.motorDuration);
-    epd.print(" sec");
+        epd.getTextBounds("No BLE schedules", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 65);
+        epd.print("No BLE schedules");
 
-    y += 22;
-    // Vacation mode
-    epd.setCursor(5, y);
-    epd.print("Vacation Mode: ");
-    epd.print(settings.vacationMode ? "ON" : "OFF");
+        epd.getTextBounds("BLE always active", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 83);
+        epd.print("BLE always active");
+        return;
+    }
 
-    y += 22;
-    // Battery type
-    epd.setCursor(5, y);
-    epd.print("Battery Type: ");
-    epd.print(settings.getBatteryTypeName());
+    // Display schedules (4 visible at a time with compact layout)
+    int visibleCount = min(4, scheduleCount - scrollOffset);
+    int y = 42;  // Start below 24px header + margin
 
-    y += 22;
-    // Time sync status
-    epd.setCursor(5, y);
-    epd.print("Time Synced: ");
-    epd.print(status.timeSynced ? "Yes" : "No");
+    // Use monospace font for aligned columns
+    epd.setFont(&FreeMono9pt7b);
 
-    // Footer hint
-    epd.setCursor(5, 122);
-    epd.print("Use WiFi to change settings");
+    for (int i = 0; i < visibleCount; i++) {
+        int scheduleIdx = scrollOffset + i;
+        BleSchedule* sched = storage.getBleSchedule(scheduleIdx);
+        if (sched) {
+            BleSchedule& schedule = *sched;
+
+            // Format: "06:00-18:00 Daily  ON" or "06:00-18:00 S-T-T-- --"
+            char line[32];
+            char daysStr[8];
+
+            if (schedule.days == DAYS_ALL) {
+                strcpy(daysStr, "Daily ");
+            } else {
+                const char* dayLetters = "SMTWTFS";
+                for (int d = 0; d < 7; d++) {
+                    daysStr[d] = (schedule.days & (1 << d)) ? dayLetters[d] : '-';
+                }
+                daysStr[7] = '\0';
+            }
+
+            snprintf(line, sizeof(line), "%02d:%02d-%02d:%02d %s %s",
+                     schedule.startHour, schedule.startMinute,
+                     schedule.endHour, schedule.endMinute,
+                     daysStr,
+                     schedule.enabled ? "ON" : "--");
+
+            epd.setCursor(5, y);
+            epd.print(line);
+
+            y += 18;
+        }
+    }
+
+    // Scroll hint at bottom
+    if (scheduleCount > 4) {
+        drawScrollIndicator(scrollOffset, scheduleCount - 4);
+        epd.setCursor(5, 122);
+        epd.print(scrollMode ? "Scrolling - Hold to exit" : "Hold to scroll");
+    }
 }
 
 void Display::drawAboutScreen() {
     drawHeader("About");
 
-    int y = 42;
+    epd.setFont(&FreeMono9pt7b);
+    int y = 42;  // Start below 24px header + margin
 
-    // App name and version
-    epd.setFont(&FreeSansBold12pt7b);
+    // Version
     epd.setCursor(5, y);
-    epd.print("FeedMe v");
+    epd.print("Version: ");
     epd.print(FEEDME_VERSION);
 
-    y += 25;
-    epd.setFont(&FreeSans9pt7b);
-
     // Device ID
+    y += 18;
     epd.setCursor(5, y);
-    epd.print("Device ID: ");
+    epd.print("Device: ");
     epd.print(storage.getDeviceId());
-
-    y += 20;
-    // Hardware
-    epd.setCursor(5, y);
-    epd.print("Hardware: ESP32-C3 + E-Paper");
-
-    y += 20;
-    // Display
-    epd.setCursor(5, y);
-    epd.print("Display: 2.9\" 296x128");
 
     // Footer
     epd.setCursor(5, 122);
@@ -487,11 +608,11 @@ void Display::drawAboutScreen() {
 // =============================================================================
 
 void Display::drawHeader(const char* title) {
-    // Header bar
-    epd.fillRect(0, 0, SCREEN_WIDTH, 20, GxEPD_BLACK);
+    // Header bar (24px tall)
+    epd.fillRect(0, 0, SCREEN_WIDTH, 24, GxEPD_BLACK);
     epd.setTextColor(GxEPD_WHITE);
     epd.setFont(&FreeSansBold12pt7b);
-    epd.setCursor(5, 16);
+    epd.setCursor(5, 19);  // ~3px top margin, ~5px bottom margin
     epd.print(title);
     epd.setTextColor(GxEPD_BLACK);
 }
@@ -514,26 +635,38 @@ void Display::drawBatteryIcon(int16_t x, int16_t y) {
 }
 
 void Display::drawWifiIcon(int16_t x, int16_t y, bool enabled, bool connected) {
+    // Shift up to align with battery/BLE icons
+    int cy = y + 12;
+
     if (!enabled) {
-        // X mark for disabled
+        // X mark for disabled (thicker)
         epd.drawLine(x, y + 2, x + 12, y + 14, GxEPD_WHITE);
+        epd.drawLine(x + 1, y + 2, x + 13, y + 14, GxEPD_WHITE);
         epd.drawLine(x + 12, y + 2, x, y + 14, GxEPD_WHITE);
+        epd.drawLine(x + 13, y + 2, x + 1, y + 14, GxEPD_WHITE);
         return;
     }
 
-    // Dot at bottom for WiFi
-    epd.fillCircle(x + 6, y + 13, 2, GxEPD_WHITE);
+    // Solid dot at bottom for WiFi
+    epd.fillCircle(x + 7, cy, 2, GxEPD_WHITE);
 
-    // Arcs for signal strength
-    if (connected) {
-        // Draw arc segments manually since GxEPD2 doesn't have drawArc
-        for (int r = 5; r <= 9; r += 4) {
-            for (int angle = 225; angle <= 315; angle += 10) {
-                float rad = angle * PI / 180.0;
-                int px = x + 6 + (int)(r * cos(rad));
-                int py = y + 13 + (int)(r * sin(rad));
-                epd.drawPixel(px, py, GxEPD_WHITE);
-            }
+    // Draw thick arcs using multiple concentric circles
+    // Inner arc
+    for (int r = 5; r <= 6; r++) {
+        for (int angle = 220; angle <= 320; angle += 5) {
+            float rad = angle * PI / 180.0;
+            int px = x + 7 + (int)(r * cos(rad));
+            int py = cy + (int)(r * sin(rad));
+            epd.drawPixel(px, py, GxEPD_WHITE);
+        }
+    }
+    // Outer arc
+    for (int r = 9; r <= 10; r++) {
+        for (int angle = 220; angle <= 320; angle += 5) {
+            float rad = angle * PI / 180.0;
+            int px = x + 7 + (int)(r * cos(rad));
+            int py = cy + (int)(r * sin(rad));
+            epd.drawPixel(px, py, GxEPD_WHITE);
         }
     }
 }
@@ -556,16 +689,16 @@ void Display::drawBleIcon(int16_t x, int16_t y, bool enabled, bool connected) {
 }
 
 void Display::drawWarningBanner(const char* message) {
-    // Warning banner below header
-    epd.fillRect(0, 20, SCREEN_WIDTH, 20, GxEPD_BLACK);
+    // Warning banner below header (header is 24px)
+    epd.fillRect(0, 24, SCREEN_WIDTH, 16, GxEPD_BLACK);
     epd.setTextColor(GxEPD_WHITE);
-    epd.setFont(&FreeSans9pt7b);
+    epd.setFont(&FreeMono9pt7b);
 
     // Center the text
     int16_t x1, y1;
     uint16_t w, h;
     epd.getTextBounds(message, 0, 0, &x1, &y1, &w, &h);
-    epd.setCursor((SCREEN_WIDTH - w) / 2, 35);
+    epd.setCursor((SCREEN_WIDTH - w) / 2, 37);
     epd.print(message);
 
     epd.setTextColor(GxEPD_BLACK);
@@ -604,4 +737,157 @@ void Display::drawQRCode(int16_t x, int16_t y, const char* data, int pixelSize) 
             }
         }
     }
+}
+
+// =============================================================================
+// Feed Countdown Warning Display
+// =============================================================================
+
+void Display::showFeedCountdown(int secondsRemaining) {
+    epd.setFullWindow();
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+
+        int16_t x1, y1;
+        uint16_t w, h;
+
+        // Warning header (centered)
+        epd.fillRect(0, 0, SCREEN_WIDTH, 24, GxEPD_BLACK);
+        epd.setTextColor(GxEPD_WHITE);
+        epd.setFont(&FreeSansBold12pt7b);
+        const char* header = "!! WARNING !!";
+        epd.getTextBounds(header, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 19);
+        epd.print(header);
+        epd.setTextColor(GxEPD_BLACK);
+
+        // Stand back message (centered)
+        epd.setFont(&FreeSansBold12pt7b);
+        const char* standBack = "STAND BACK!";
+        epd.getTextBounds(standBack, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 55);
+        epd.print(standBack);
+
+        // Countdown (centered)
+        epd.setFont(&FreeSansBold18pt7b);
+        char countText[20];
+        snprintf(countText, sizeof(countText), "Feed in %ds", secondsRemaining);
+        epd.getTextBounds(countText, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 95);
+        epd.print(countText);
+
+        // Cancel hint (centered)
+        epd.setFont(&FreeMono9pt7b);
+        const char* hint = "Press button to cancel";
+        epd.getTextBounds(hint, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 122);
+        epd.print(hint);
+
+    } while (epd.nextPage());
+}
+
+void Display::showFeedingNow() {
+    epd.setFullWindow();
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+
+        int16_t x1, y1;
+        uint16_t w, h;
+
+        // Warning header (centered)
+        epd.fillRect(0, 0, SCREEN_WIDTH, 24, GxEPD_BLACK);
+        epd.setTextColor(GxEPD_WHITE);
+        epd.setFont(&FreeSansBold12pt7b);
+        const char* header = "!! WARNING !!";
+        epd.getTextBounds(header, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 19);
+        epd.print(header);
+        epd.setTextColor(GxEPD_BLACK);
+
+        // Feeding message (centered)
+        epd.setFont(&FreeSansBold18pt7b);
+        const char* msg = "FEEDING NOW!";
+        epd.getTextBounds(msg, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 80);
+        epd.print(msg);
+
+    } while (epd.nextPage());
+}
+
+void Display::showFeedCancelled() {
+    epd.setFullWindow();
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+
+        int16_t x1, y1;
+        uint16_t w, h;
+
+        // Header (centered)
+        epd.fillRect(0, 0, SCREEN_WIDTH, 24, GxEPD_BLACK);
+        epd.setTextColor(GxEPD_WHITE);
+        epd.setFont(&FreeSansBold12pt7b);
+        const char* header = "Feed Test";
+        epd.getTextBounds(header, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 19);
+        epd.print(header);
+        epd.setTextColor(GxEPD_BLACK);
+
+        // Cancelled message (centered)
+        epd.setFont(&FreeSansBold18pt7b);
+        const char* msg = "Cancelled";
+        epd.getTextBounds(msg, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 80);
+        epd.print(msg);
+
+    } while (epd.nextPage());
+}
+
+// =============================================================================
+// Screensaver
+// =============================================================================
+
+constexpr uint32_t SCREENSAVER_TIMEOUT_MS = 60 * 1000;  // 60 seconds
+
+void Display::checkScreensaver() {
+    if (screensaverActive) {
+        return;  // Already in screensaver mode
+    }
+
+    uint32_t now = millis();
+    if (now - lastButtonActivityTime > SCREENSAVER_TIMEOUT_MS) {
+        screensaverActive = true;
+        drawScreensaver();
+    }
+}
+
+void Display::drawScreensaver() {
+    epd.setFullWindow();
+    epd.firstPage();
+    do {
+        buttons.update();  // Keep polling buttons during refresh
+
+        epd.fillScreen(GxEPD_WHITE);
+
+        // Draw deer icon on left side, vertically centered
+        int iconX = 10;
+        int iconY = (SCREEN_HEIGHT - DEER_ICON_HEIGHT) / 2;
+        epd.drawBitmap(iconX, iconY, DEER_ICON, DEER_ICON_WIDTH, DEER_ICON_HEIGHT, GxEPD_BLACK);
+
+        // "FeedMe" text to the right of icon
+        int textX = iconX + DEER_ICON_WIDTH + 15;
+
+        epd.setFont(&FreeSansBold18pt7b);
+        epd.setCursor(textX, 50);
+        epd.print("FeedMe");
+
+        // "Press button to wake" below
+        epd.setFont(&FreeSans9pt7b);
+        epd.setCursor(textX, 75);
+        epd.print("Press button");
+        epd.setCursor(textX, 93);
+        epd.print("to wake");
+    } while (epd.nextPage());
 }

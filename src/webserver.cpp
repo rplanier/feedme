@@ -6,14 +6,14 @@
 #include "config.h"
 #include "rtc_manager.h"
 
-WebServer webServer;
+FeedMeWebServer webServer;
 
-void WebServer::recordActivity() {
+void FeedMeWebServer::recordActivity() {
     lastActivityTime = millis();
     wifiManager.resetIdleTimer();  // Any API activity resets WiFi timeout
 }
 
-void WebServer::begin() {
+void FeedMeWebServer::begin() {
     if (running) {
         return;
     }
@@ -28,7 +28,7 @@ void WebServer::begin() {
     Serial.println("WebServer: Started on port 80");
 }
 
-void WebServer::stop() {
+void FeedMeWebServer::stop() {
     if (!running) {
         return;
     }
@@ -41,18 +41,68 @@ void WebServer::stop() {
     Serial.println("WebServer: Stopped");
 }
 
-void WebServer::setupRoutes() {
+void FeedMeWebServer::setupRoutes() {
     setupStaticFiles();
     setupAPI();
+    setupCaptivePortal();
+}
 
-    // Captive portal redirect
-    server->onNotFound([this](AsyncWebServerRequest* request) {
+void FeedMeWebServer::setupCaptivePortal() {
+    // Captive portal response - serves a page that redirects to our app
+    // This triggers iOS/Android captive portal popup
+    const char* portalHTML =
+        "<!DOCTYPE html><html><head>"
+        "<meta http-equiv='refresh' content='0;url=http://192.168.4.1/'>"
+        "<title>FeedMe Setup</title></head>"
+        "<body><a href='http://192.168.4.1/'>Click here for FeedMe Setup</a></body></html>";
+
+    // iOS captive portal detection URLs
+    server->on("/hotspot-detect.html", HTTP_GET, [this, portalHTML](AsyncWebServerRequest* request) {
         recordActivity();
-        request->redirect("/");
+        request->send(200, "text/html", portalHTML);
+    });
+
+    server->on("/library/test/success.html", HTTP_GET, [this, portalHTML](AsyncWebServerRequest* request) {
+        recordActivity();
+        request->send(200, "text/html", portalHTML);
+    });
+
+    // Android captive portal detection
+    server->on("/generate_204", HTTP_GET, [this, portalHTML](AsyncWebServerRequest* request) {
+        recordActivity();
+        request->send(200, "text/html", portalHTML);
+    });
+
+    server->on("/gen_204", HTTP_GET, [this, portalHTML](AsyncWebServerRequest* request) {
+        recordActivity();
+        request->send(200, "text/html", portalHTML);
+    });
+
+    // Windows captive portal detection
+    server->on("/connecttest.txt", HTTP_GET, [this, portalHTML](AsyncWebServerRequest* request) {
+        recordActivity();
+        request->send(200, "text/html", portalHTML);
+    });
+
+    server->on("/ncsi.txt", HTTP_GET, [this, portalHTML](AsyncWebServerRequest* request) {
+        recordActivity();
+        request->send(200, "text/html", portalHTML);
+    });
+
+    // Catch-all for any other requests (other captive portal checks)
+    server->onNotFound([this, portalHTML](AsyncWebServerRequest* request) {
+        recordActivity();
+        // Check if it's an API call that we missed
+        String url = request->url();
+        if (url.startsWith("/api/")) {
+            request->send(404, "application/json", "{\"error\":\"Not found\"}");
+        } else {
+            request->send(200, "text/html", portalHTML);
+        }
     });
 }
 
-void WebServer::setupStaticFiles() {
+void FeedMeWebServer::setupStaticFiles() {
     // Serve index.html for root
     server->on("/", HTTP_GET, [this](AsyncWebServerRequest* request) {
         recordActivity();
@@ -74,7 +124,7 @@ void WebServer::setupStaticFiles() {
     server->serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
 }
 
-void WebServer::setupAPI() {
+void FeedMeWebServer::setupAPI() {
     // GET /api/status
     server->on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
         handleGetStatus(request);
@@ -226,6 +276,7 @@ void WebServer::setupAPI() {
                 if (doc.containsKey("enabled")) schedule.enabled = doc["enabled"];
 
                 if (storage.updateBleSchedule(id, schedule)) {
+                    display.refreshIfBleSchedulesAffected();
                     sendJson(request, 200, "{\"success\":true}");
                 } else {
                     sendError(request, 500, "Failed to update BLE schedule");
@@ -245,6 +296,7 @@ void WebServer::setupAPI() {
                     uint16_t id = request->getParam("id")->value().toInt();
                     Serial.printf("WebServer: Deleting BLE schedule ID %d\n", id);
                     if (storage.deleteBleSchedule(id)) {
+                        display.refreshIfBleSchedulesAffected();
                         sendJson(request, 200, "{\"success\":true}");
                     } else {
                         sendError(request, 404, "BLE schedule not found");
@@ -281,6 +333,7 @@ void WebServer::setupAPI() {
                 schedule.enabled = doc["enabled"] | true;
 
                 if (storage.addBleSchedule(schedule)) {
+                    display.refreshIfBleSchedulesAffected();
                     sendJson(request, 201, "{\"success\":true}");
                 } else {
                     sendError(request, 500, "Failed to add BLE schedule");
@@ -288,9 +341,16 @@ void WebServer::setupAPI() {
             }
         }
     );
+
+    // GET /api/feed-history - Get feed event history
+    server->on("/api/feed-history", HTTP_GET, [this](AsyncWebServerRequest* request) {
+        recordActivity();
+        String json = storage.getFeedHistoryJson();
+        sendJson(request, 200, json);
+    });
 }
 
-void WebServer::handleGetStatus(AsyncWebServerRequest* request) {
+void FeedMeWebServer::handleGetStatus(AsyncWebServerRequest* request) {
     recordActivity();
 
     JsonDocument doc;
@@ -302,29 +362,37 @@ void WebServer::handleGetStatus(AsyncWebServerRequest* request) {
     doc["motorRunning"] = motor.isRunning();
     doc["deviceId"] = storage.getDeviceId();
     doc["timeSynced"] = rtcManager.isTimeSynced();
+    doc["lastResetReason"] = getResetReasonString();
 
-    // Current time from RTC manager
+    // Current time from RTC manager (UTC with "Z" suffix so JS converts to local)
     DateTime now = rtcManager.now();
     char timeStr[32];
-    snprintf(timeStr, sizeof(timeStr), "%04d-%02d-%02dT%02d:%02d:%02d",
+    snprintf(timeStr, sizeof(timeStr), "%04d-%02d-%02dT%02d:%02d:%02dZ",
              now.year(), now.month(), now.day(),
              now.hour(), now.minute(), now.second());
     doc["currentTime"] = timeStr;
 
-    // Next feed time (only if time is synced)
-    if (rtcManager.isTimeSynced()) {
+    // Next feed time (only if time is synced and battery not critical)
+    if (battery.getStatus() == BatteryStatus::CRITICAL) {
+        doc["nextFeed"] = "Disabled - Low Battery";
+    } else if (rtcManager.isTimeSynced()) {
         int nextHour, nextMinute, daysAway;
         if (storage.getNextRunTime(nextHour, nextMinute, daysAway)) {
             char nextFeedStr[32];
             static const char* dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
+            // Convert UTC hour to local time for display
+            int16_t tzOffset = storage.getSettings().timezoneOffset;
+            int localHour = nextHour - (tzOffset / 60);
+            localHour = (localHour + 24) % 24;
+
             if (daysAway == 0) {
-                snprintf(nextFeedStr, sizeof(nextFeedStr), "Today %02d:%02d", nextHour, nextMinute);
+                snprintf(nextFeedStr, sizeof(nextFeedStr), "Today %02d:%02d", localHour, nextMinute);
             } else if (daysAway == 1) {
-                snprintf(nextFeedStr, sizeof(nextFeedStr), "Tomorrow %02d:%02d", nextHour, nextMinute);
+                snprintf(nextFeedStr, sizeof(nextFeedStr), "Tomorrow %02d:%02d", localHour, nextMinute);
             } else {
                 int nextDayOfWeek = (now.dayOfTheWeek() + daysAway) % 7;
-                snprintf(nextFeedStr, sizeof(nextFeedStr), "%s %02d:%02d", dayNames[nextDayOfWeek], nextHour, nextMinute);
+                snprintf(nextFeedStr, sizeof(nextFeedStr), "%s %02d:%02d", dayNames[nextDayOfWeek], localHour, nextMinute);
             }
             doc["nextFeed"] = nextFeedStr;
         } else {
@@ -338,18 +406,24 @@ void WebServer::handleGetStatus(AsyncWebServerRequest* request) {
     doc["wifiTimeoutSeconds"] = WIFI_IDLE_TIMEOUT_MS / 1000;
     doc["wifiRemainingSeconds"] = wifiManager.getRemainingIdleSeconds();
 
+    // Diagnostics
+    doc["uptime"] = millis() / 1000;
+    doc["freeHeap"] = ESP.getFreeHeap();
+    doc["wifiClients"] = WiFi.softAPgetStationNum();
+    doc["feedHistoryCount"] = storage.getFeedHistoryCount();
+
     String response;
     serializeJson(doc, response);
     sendJson(request, 200, response);
 }
 
-void WebServer::handleGetSchedules(AsyncWebServerRequest* request) {
+void FeedMeWebServer::handleGetSchedules(AsyncWebServerRequest* request) {
     recordActivity();
     String json = storage.getSchedulesJson();
     sendJson(request, 200, json);
 }
 
-void WebServer::handleCreateSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+void FeedMeWebServer::handleCreateSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
     recordActivity();
 
     JsonDocument doc;
@@ -373,13 +447,14 @@ void WebServer::handleCreateSchedule(AsyncWebServerRequest* request, uint8_t* da
     schedule.enabled = doc["enabled"] | true;
 
     if (storage.addSchedule(schedule)) {
+        display.refreshIfFeedSchedulesAffected();
         sendJson(request, 201, "{\"success\":true}");
     } else {
         sendError(request, 500, "Failed to add schedule");
     }
 }
 
-void WebServer::handleUpdateSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len, uint16_t id) {
+void FeedMeWebServer::handleUpdateSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len, uint16_t id) {
     recordActivity();
 
     JsonDocument doc;
@@ -409,23 +484,25 @@ void WebServer::handleUpdateSchedule(AsyncWebServerRequest* request, uint8_t* da
     if (doc.containsKey("enabled")) schedule.enabled = doc["enabled"];
 
     if (storage.updateSchedule(id, schedule)) {
+        display.refreshIfFeedSchedulesAffected();
         sendJson(request, 200, "{\"success\":true}");
     } else {
         sendError(request, 500, "Failed to update schedule");
     }
 }
 
-void WebServer::handleDeleteSchedule(AsyncWebServerRequest* request, uint16_t id) {
+void FeedMeWebServer::handleDeleteSchedule(AsyncWebServerRequest* request, uint16_t id) {
     recordActivity();
 
     if (storage.deleteSchedule(id)) {
+        display.refreshIfFeedSchedulesAffected();
         sendJson(request, 200, "{\"success\":true}");
     } else {
         sendError(request, 404, "Schedule not found");
     }
 }
 
-void WebServer::handleThrow(AsyncWebServerRequest* request) {
+void FeedMeWebServer::handleThrow(AsyncWebServerRequest* request) {
     recordActivity();
 
     if (motor.isRunning()) {
@@ -442,10 +519,13 @@ void WebServer::handleThrow(AsyncWebServerRequest* request) {
         throwCallback();
     }
 
+    // Log manual feed event from web interface
+    storage.logFeedEvent(motor.getDefaultDuration(), true, "");
+
     sendJson(request, 200, "{\"success\":true}");
 }
 
-void WebServer::handleTimeSync(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+void FeedMeWebServer::handleTimeSync(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
     recordActivity();
 
     JsonDocument doc;
@@ -463,25 +543,28 @@ void WebServer::handleTimeSync(AsyncWebServerRequest* request, uint8_t* data, si
 
     uint32_t epoch = doc["epoch"];
 
-    // Apply timezone offset if provided (in minutes, like JS getTimezoneOffset())
+    // Store timezone offset if provided (in minutes, like JS getTimezoneOffset())
     // getTimezoneOffset() returns positive for behind UTC (e.g., 360 for CST/UTC-6)
     if (doc.containsKey("offset")) {
-        int32_t offsetMinutes = doc["offset"];
-        epoch -= (offsetMinutes * 60);  // Convert UTC to local time
+        int16_t offsetMinutes = doc["offset"];
+        storage.getSettings().timezoneOffset = offsetMinutes;
+        storage.saveSettings();
+        Serial.printf("WebServer: Timezone offset set to %d minutes\n", offsetMinutes);
     }
 
     if (timeUpdateCallback) {
         timeUpdateCallback(epoch);
     }
 
-    // Set time via RTC manager (also marks time as synced)
+    // Set time via RTC manager as UTC (also marks time as synced)
     rtcManager.setTime(epoch);
 
-    Serial.printf("WebServer: Time synced to epoch %lu (local)\n", epoch);
+    display.refreshIfTimeAffected();
+    Serial.printf("WebServer: Time synced to UTC epoch %lu\n", epoch);
     sendJson(request, 200, "{\"success\":true}");
 }
 
-void WebServer::handleGetSettings(AsyncWebServerRequest* request) {
+void FeedMeWebServer::handleGetSettings(AsyncWebServerRequest* request) {
     recordActivity();
 
     Settings& settings = storage.getSettings();
@@ -490,19 +573,26 @@ void WebServer::handleGetSettings(AsyncWebServerRequest* request) {
     doc["deviceId"] = settings.deviceId;
     doc["motorDuration"] = settings.motorDuration;
     doc["vacationMode"] = settings.vacationMode;
-    doc["batteryType"] = static_cast<uint8_t>(settings.batteryType);
-    doc["batteryTypeName"] = settings.getBatteryTypeName();
-    doc["batteryCriticalVoltage"] = settings.getCriticalVoltage();
     doc["sleepTimeout"] = static_cast<uint8_t>(settings.sleepTimeout);
     doc["sleepTimeoutName"] = settings.getSleepTimeoutName();
     doc["sleepTimeoutSeconds"] = settings.getSleepTimeoutSeconds();
+    doc["timezoneOffset"] = settings.timezoneOffset;
+    doc["batteryType"] = static_cast<uint8_t>(settings.batteryType);
+
+    // Human-readable battery type name
+    switch (settings.batteryType) {
+        case BatteryType::AGM: doc["batteryTypeName"] = "AGM"; break;
+        case BatteryType::GEL: doc["batteryTypeName"] = "GEL"; break;
+        case BatteryType::SLA:
+        default: doc["batteryTypeName"] = "SLA"; break;
+    }
 
     String response;
     serializeJson(doc, response);
     sendJson(request, 200, response);
 }
 
-void WebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+void FeedMeWebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
     recordActivity();
 
     JsonDocument doc;
@@ -522,12 +612,6 @@ void WebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8_t* da
     if (doc["vacationMode"].is<bool>()) {
         settings.vacationMode = doc["vacationMode"];
     }
-    if (doc["batteryType"].is<uint8_t>()) {
-        uint8_t type = doc["batteryType"];
-        if (type <= 2) {  // Valid range: 0=SLA, 1=AGM, 2=GEL
-            settings.batteryType = static_cast<BatteryType>(type);
-        }
-    }
     if (doc["sleepTimeout"].is<uint8_t>()) {
         uint8_t timeout = doc["sleepTimeout"];
         // Validate against known enum values
@@ -536,12 +620,20 @@ void WebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8_t* da
             settings.sleepTimeout = static_cast<SleepTimeout>(timeout);
         }
     }
+    if (doc["batteryType"].is<uint8_t>()) {
+        uint8_t type = doc["batteryType"];
+        // Validate against known enum values (0=SLA, 1=AGM, 2=GEL)
+        if (type <= 2) {
+            settings.batteryType = static_cast<BatteryType>(type);
+        }
+    }
 
     storage.saveSettings();
+    display.refreshIfSettingsAffected();
     sendJson(request, 200, "{\"success\":true}");
 }
 
-void WebServer::handleVacationMode(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
+void FeedMeWebServer::handleVacationMode(AsyncWebServerRequest* request, uint8_t* data, size_t len) {
     recordActivity();
 
     JsonDocument doc;
@@ -559,6 +651,7 @@ void WebServer::handleVacationMode(AsyncWebServerRequest* request, uint8_t* data
 
     storage.getSettings().vacationMode = doc["enabled"];
     storage.saveSettings();
+    display.refreshIfSettingsAffected();
 
     Serial.printf("WebServer: Vacation mode %s\n",
                   storage.getSettings().vacationMode ? "enabled" : "disabled");
@@ -566,11 +659,11 @@ void WebServer::handleVacationMode(AsyncWebServerRequest* request, uint8_t* data
     sendJson(request, 200, "{\"success\":true}");
 }
 
-void WebServer::sendJson(AsyncWebServerRequest* request, int code, const String& json) {
+void FeedMeWebServer::sendJson(AsyncWebServerRequest* request, int code, const String& json) {
     request->send(code, "application/json", json);
 }
 
-void WebServer::sendError(AsyncWebServerRequest* request, int code, const char* message) {
+void FeedMeWebServer::sendError(AsyncWebServerRequest* request, int code, const char* message) {
     JsonDocument doc;
     doc["error"] = message;
     String response;
