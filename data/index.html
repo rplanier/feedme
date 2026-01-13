@@ -147,6 +147,25 @@
                 </div>
             </div>
 
+            <div class="settings-group">
+                <h3>Firmware</h3>
+                <div class="ota-upload">
+                    <input type="file" id="ota-file" accept=".bin" class="hidden">
+                    <button id="ota-select-btn" class="action-btn secondary">Select Firmware File</button>
+                    <div id="ota-file-info" class="ota-info hidden">
+                        <span id="ota-filename"></span>
+                        <button id="ota-upload-btn" class="action-btn primary">Upload &amp; Install</button>
+                    </div>
+                    <div id="ota-progress" class="ota-progress hidden">
+                        <div class="progress-bar">
+                            <div id="ota-progress-fill" class="progress-fill"></div>
+                        </div>
+                        <span id="ota-progress-text">0%</span>
+                    </div>
+                    <div id="ota-status" class="ota-status hidden"></div>
+                </div>
+            </div>
+
             <button id="save-settings-btn" class="action-btn primary">
                 Save Settings
             </button>

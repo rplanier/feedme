@@ -334,6 +334,62 @@ nav {
     padding-right: 32px;
 }
 
+/* OTA Firmware Update */
+.ota-upload {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ota-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ota-info span {
+    color: var(--text-dim);
+    font-size: 14px;
+}
+
+.ota-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.2s;
+}
+
+.ota-status {
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    font-weight: 500;
+}
+
+.ota-status.success {
+    background: rgba(76, 175, 80, 0.2);
+    color: var(--success);
+}
+
+.ota-status.error {
+    background: rgba(244, 67, 54, 0.2);
+    color: var(--danger);
+}
+
 /* Toggle Switch */
 .toggle {
     position: relative;

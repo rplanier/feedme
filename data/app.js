@@ -774,3 +774,84 @@ async function toggleBleSchedule(id, enabled) {
         loadBleSchedules(); // Reload to reset toggle state
     }
 }
+
+// OTA Firmware Update
+function setupOTA() {
+    const fileInput = document.getElementById('ota-file');
+    const selectBtn = document.getElementById('ota-select-btn');
+    const fileInfo = document.getElementById('ota-file-info');
+    const filename = document.getElementById('ota-filename');
+    const uploadBtn = document.getElementById('ota-upload-btn');
+    const progress = document.getElementById('ota-progress');
+    const progressFill = document.getElementById('ota-progress-fill');
+    const progressText = document.getElementById('ota-progress-text');
+    const status = document.getElementById('ota-status');
+
+    if (!fileInput || !selectBtn) return;
+
+    selectBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (file) {
+            filename.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+            fileInfo.classList.remove('hidden');
+        } else {
+            fileInfo.classList.add('hidden');
+        }
+    });
+
+    uploadBtn.addEventListener('click', async () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        // Hide file info, show progress
+        fileInfo.classList.add('hidden');
+        selectBtn.classList.add('hidden');
+        progress.classList.remove('hidden');
+        status.classList.add('hidden');
+
+        const formData = new FormData();
+        formData.append('firmware', file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/ota');
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 100);
+                progressFill.style.width = pct + '%';
+                progressText.textContent = pct + '%';
+            }
+        };
+
+        xhr.onload = () => {
+            progress.classList.add('hidden');
+            status.classList.remove('hidden');
+            if (xhr.status === 200) {
+                status.textContent = 'Update successful! Rebooting...';
+                status.className = 'ota-status success';
+                showToast('Firmware updated! Reconnect in a few seconds.', 'success');
+            } else {
+                status.textContent = 'Update failed. Please try again.';
+                status.className = 'ota-status error';
+                selectBtn.classList.remove('hidden');
+                showToast('Firmware update failed', 'error');
+            }
+        };
+
+        xhr.onerror = () => {
+            progress.classList.add('hidden');
+            status.classList.remove('hidden');
+            status.textContent = 'Upload error. Please try again.';
+            status.className = 'ota-status error';
+            selectBtn.classList.remove('hidden');
+            showToast('Upload failed', 'error');
+        };
+
+        xhr.send(formData);
+    });
+}
+
+// Initialize OTA on page load
+document.addEventListener('DOMContentLoaded', setupOTA);

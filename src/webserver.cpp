@@ -5,6 +5,7 @@
 #include "wifi_manager.h"
 #include "config.h"
 #include "rtc_manager.h"
+#include <Update.h>
 
 FeedMeWebServer webServer;
 
@@ -348,6 +349,46 @@ void FeedMeWebServer::setupAPI() {
         String json = storage.getFeedHistoryJson();
         sendJson(request, 200, json);
     });
+
+    // POST /api/ota - Firmware update upload
+    server->on("/api/ota", HTTP_POST,
+        // Request handler (called when upload is complete)
+        [this](AsyncWebServerRequest* request) {
+            recordActivity();
+            bool success = !Update.hasError();
+            AsyncWebServerResponse* response = request->beginResponse(
+                success ? 200 : 500,
+                "application/json",
+                success ? "{\"success\":true,\"message\":\"Update successful. Rebooting...\"}"
+                        : "{\"success\":false,\"message\":\"Update failed\"}"
+            );
+            response->addHeader("Connection", "close");
+            request->send(response);
+            if (success) {
+                delay(500);
+                ESP.restart();
+            }
+        },
+        // Upload handler (called for each chunk of data)
+        [this](AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) {
+            if (index == 0) {
+                Serial.printf("OTA: Starting update with %s\n", filename.c_str());
+                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                    Update.printError(Serial);
+                }
+            }
+            if (Update.write(data, len) != len) {
+                Update.printError(Serial);
+            }
+            if (final) {
+                if (Update.end(true)) {
+                    Serial.printf("OTA: Update complete (%u bytes)\n", index + len);
+                } else {
+                    Update.printError(Serial);
+                }
+            }
+        }
+    );
 }
 
 void FeedMeWebServer::handleGetStatus(AsyncWebServerRequest* request) {
