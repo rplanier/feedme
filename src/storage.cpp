@@ -19,6 +19,8 @@ void Storage::deserializeFeedSchedule(Schedule& s, JsonObject& obj) {
     s.endDay = obj["endDay"] | -1;
     s.duration = obj["duration"] | 0;
     s.enabled = obj["enabled"] | true;
+    s.scheduleType = static_cast<ScheduleType>(obj["scheduleType"] | 0);  // Default to SPECIFIC_TIME
+    s.sunOffset = obj["sunOffset"] | 0;  // Default to 0 minutes offset
 
     // Name is generated when schedule is added/updated, not during deserialization
 }
@@ -35,6 +37,8 @@ void Storage::serializeFeedSchedule(const Schedule& s, JsonObject& obj) {
     obj["endDay"] = s.endDay;
     obj["duration"] = s.duration;
     obj["enabled"] = s.enabled;
+    obj["scheduleType"] = static_cast<uint8_t>(s.scheduleType);
+    obj["sunOffset"] = s.sunOffset;
 }
 
 void Storage::deserializeBleSchedule(BleSchedule& s, JsonObject& obj) {
@@ -130,6 +134,9 @@ void Storage::initDefaultSettings() {
     settings.sleepTimeout = DEFAULT_SLEEP_TIMEOUT;
     settings.timezoneOffset = 0;  // UTC
     settings.batteryType = BatteryType::SLA;  // Default to SLA
+    settings.latitude = 0.0f;
+    settings.longitude = 0.0f;
+    settings.locationSet = false;
 }
 
 void Storage::loadSettings() {
@@ -138,6 +145,9 @@ void Storage::loadSettings() {
     settings.sleepTimeout = static_cast<SleepTimeout>(prefs.getUChar("sleepTmout", static_cast<uint8_t>(DEFAULT_SLEEP_TIMEOUT)));
     settings.timezoneOffset = prefs.getShort("tzOffset", 0);  // Default to UTC
     settings.batteryType = static_cast<BatteryType>(prefs.getUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(BatteryType::SLA)));
+    settings.latitude = prefs.getFloat(PREF_LATITUDE, 0.0f);
+    settings.longitude = prefs.getFloat(PREF_LONGITUDE, 0.0f);
+    settings.locationSet = prefs.getBool(PREF_LOCATION_SET, false);
     strncpy(settings.deviceId, deviceId, 5);
 }
 
@@ -147,6 +157,9 @@ void Storage::saveSettings() {
     prefs.putUChar("sleepTmout", static_cast<uint8_t>(settings.sleepTimeout));
     prefs.putShort("tzOffset", settings.timezoneOffset);
     prefs.putUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(settings.batteryType));
+    prefs.putFloat(PREF_LATITUDE, settings.latitude);
+    prefs.putFloat(PREF_LONGITUDE, settings.longitude);
+    prefs.putBool(PREF_LOCATION_SET, settings.locationSet);
     Serial.println("Storage: Settings saved");
 }
 
@@ -242,6 +255,8 @@ String Storage::getSchedulesJson() {
         obj["endDay"] = s->endDay;
         obj["duration"] = s->duration;
         obj["enabled"] = s->enabled;
+        obj["scheduleType"] = static_cast<uint8_t>(s->scheduleType);
+        obj["sunOffset"] = s->sunOffset;
     }
 
     String result;

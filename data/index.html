@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>FeedMe</title>
+    <title>FeedMe Feeder Timer</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="app">
         <!-- Header -->
         <header>
-            <h1 id="app-title">FeedMe</h1>
+            <h1 id="app-title">FeedMe Feeder Timer</h1>
             <div id="connection-status" class="status-dot"></div>
         </header>
 
@@ -40,6 +40,10 @@
                 <div class="status-row">
                     <span class="label">Next Feed</span>
                     <span id="next-feed" class="value">--:--</span>
+                </div>
+                <div class="status-row">
+                    <span class="label">Location</span>
+                    <span id="location-display" class="value">Unknown</span>
                 </div>
                 <div id="vacation-banner" class="banner warning hidden">
                     Vacation Mode Active - Feeding Paused
@@ -98,6 +102,10 @@
 
             <div class="settings-group">
                 <h3>Battery</h3>
+                <div class="info-row">
+                    <span class="label">Detected</span>
+                    <span id="detected-voltage" class="value">--</span>
+                </div>
                 <div class="setting-row">
                     <label for="battery-type">Chemistry</label>
                     <select id="battery-type">
@@ -105,6 +113,19 @@
                         <option value="1">AGM (Absorbent Glass Mat)</option>
                         <option value="2">GEL</option>
                     </select>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3>Location</h3>
+                <p class="view-description">Required for sunrise/sunset schedules. Find coordinates in your phone's Compass app or Google Maps.</p>
+                <div class="setting-row">
+                    <label for="settings-latitude">Latitude</label>
+                    <input type="number" id="settings-latitude" step="0.0001" min="-90" max="90" placeholder="32.7767">
+                </div>
+                <div class="setting-row">
+                    <label for="settings-longitude">Longitude</label>
+                    <input type="number" id="settings-longitude" step="0.0001" min="-180" max="180" placeholder="-96.7970">
                 </div>
             </div>
 
@@ -121,6 +142,10 @@
 
             <div class="settings-group">
                 <h3>Device Info</h3>
+                <div class="info-row">
+                    <span class="label">Version</span>
+                    <span id="device-version" class="value">--</span>
+                </div>
                 <div class="info-row">
                     <span class="label">Device ID</span>
                     <span id="device-id" class="value">----</span>
@@ -148,7 +173,8 @@
             </div>
 
             <div class="settings-group">
-                <h3>Firmware</h3>
+                <h3>Firmware Update</h3>
+                <p class="view-description">Upload a .bin firmware file from your device to update.</p>
                 <div class="ota-upload">
                     <input type="file" id="ota-file" accept=".bin" class="hidden">
                     <button id="ota-select-btn" class="action-btn secondary">Select Firmware File</button>
@@ -191,12 +217,25 @@
                         <input type="text" id="schedule-name" placeholder="Auto-generated">
                     </div>
                     <div class="form-group">
+                        <label for="schedule-type">Trigger</label>
+                        <select id="schedule-type">
+                            <option value="0">Specific Time</option>
+                            <option value="1">Sunrise</option>
+                            <option value="2">Sunset</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="time-group">
                         <label for="schedule-time">Time</label>
                         <input type="time" id="schedule-time" value="06:00">
                     </div>
+                    <div class="form-group hidden" id="offset-group">
+                        <label for="schedule-offset">Offset (minutes)</label>
+                        <input type="number" id="schedule-offset" min="-120" max="120" value="0">
+                        <span class="form-hint">Negative = before, Positive = after</span>
+                    </div>
                     <div class="form-group">
                         <label>Days</label>
-                        <div class="day-selector">
+                        <div class="day-selector" id="feed-day-selector">
                             <label class="day"><input type="checkbox" data-day="0"><span>S</span></label>
                             <label class="day"><input type="checkbox" data-day="1" checked><span>M</span></label>
                             <label class="day"><input type="checkbox" data-day="2" checked><span>T</span></label>
@@ -209,6 +248,49 @@
                     <div class="form-group">
                         <label for="schedule-duration">Duration (seconds)</label>
                         <input type="number" id="schedule-duration" min="1" max="30" value="5">
+                    </div>
+                    <div class="form-group">
+                        <label>Season (optional)</label>
+                        <div class="season-selector">
+                            <div class="season-row">
+                                <span>From:</span>
+                                <select id="schedule-start-month">
+                                    <option value="-1">Any</option>
+                                    <option value="1">Jan</option>
+                                    <option value="2">Feb</option>
+                                    <option value="3">Mar</option>
+                                    <option value="4">Apr</option>
+                                    <option value="5">May</option>
+                                    <option value="6">Jun</option>
+                                    <option value="7">Jul</option>
+                                    <option value="8">Aug</option>
+                                    <option value="9">Sep</option>
+                                    <option value="10">Oct</option>
+                                    <option value="11">Nov</option>
+                                    <option value="12">Dec</option>
+                                </select>
+                                <input type="number" id="schedule-start-day" min="1" max="31" value="1" class="day-input">
+                            </div>
+                            <div class="season-row">
+                                <span>To:</span>
+                                <select id="schedule-end-month">
+                                    <option value="-1">Any</option>
+                                    <option value="1">Jan</option>
+                                    <option value="2">Feb</option>
+                                    <option value="3">Mar</option>
+                                    <option value="4">Apr</option>
+                                    <option value="5">May</option>
+                                    <option value="6">Jun</option>
+                                    <option value="7">Jul</option>
+                                    <option value="8">Aug</option>
+                                    <option value="9">Sep</option>
+                                    <option value="10">Oct</option>
+                                    <option value="11">Nov</option>
+                                    <option value="12">Dec</option>
+                                </select>
+                                <input type="number" id="schedule-end-day" min="1" max="31" value="31" class="day-input">
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group toggle-row">
                         <label for="schedule-enabled">Enabled</label>

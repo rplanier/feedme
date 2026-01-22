@@ -3,7 +3,10 @@
 const API = {
     async get(endpoint) {
         const response = await fetch(`/api${endpoint}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
         return response.json();
     },
     async post(endpoint, data = {}) {
@@ -12,7 +15,10 @@ const API = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || `HTTP ${response.status}`);
+        }
         return response.json();
     }
 };
@@ -55,13 +61,13 @@ function formatTimeLocal(utcHour, minute) {
 
 // DOM Elements
 const elements = {
-    appTitle: document.getElementById('app-title'),
     connectionStatus: document.getElementById('connection-status'),
     batteryStatus: document.getElementById('battery-status'),
     batteryVoltage: document.getElementById('battery-voltage'),
     chargingIndicator: document.getElementById('charging-indicator'),
     deviceTime: document.getElementById('device-time'),
     nextFeed: document.getElementById('next-feed'),
+    locationDisplay: document.getElementById('location-display'),
     vacationBanner: document.getElementById('vacation-banner'),
     throwBtn: document.getElementById('throw-btn'),
     syncTimeBtn: document.getElementById('sync-time-btn'),
@@ -69,9 +75,14 @@ const elements = {
     addScheduleBtn: document.getElementById('add-schedule-btn'),
     motorDuration: document.getElementById('motor-duration'),
     batteryType: document.getElementById('battery-type'),
+    detectedVoltage: document.getElementById('detected-voltage'),
     vacationMode: document.getElementById('vacation-mode'),
+    deviceVersion: document.getElementById('device-version'),
     deviceId: document.getElementById('device-id'),
     saveSettingsBtn: document.getElementById('save-settings-btn'),
+    // Location settings
+    settingsLatitude: document.getElementById('settings-latitude'),
+    settingsLongitude: document.getElementById('settings-longitude'),
     modal: document.getElementById('schedule-modal'),
     modalTitle: document.getElementById('modal-title'),
     closeModal: document.getElementById('close-modal'),
@@ -81,6 +92,16 @@ const elements = {
     scheduleEnabled: document.getElementById('schedule-enabled'),
     deleteScheduleBtn: document.getElementById('delete-schedule-btn'),
     saveScheduleBtn: document.getElementById('save-schedule-btn'),
+    // Schedule type and offset elements
+    scheduleType: document.getElementById('schedule-type'),
+    scheduleOffset: document.getElementById('schedule-offset'),
+    timeGroup: document.getElementById('time-group'),
+    offsetGroup: document.getElementById('offset-group'),
+    // Season elements
+    scheduleStartMonth: document.getElementById('schedule-start-month'),
+    scheduleStartDay: document.getElementById('schedule-start-day'),
+    scheduleEndMonth: document.getElementById('schedule-end-month'),
+    scheduleEndDay: document.getElementById('schedule-end-day'),
     // BLE Schedule elements
     bleSchedulesList: document.getElementById('ble-schedules-list'),
     addBleScheduleBtn: document.getElementById('add-ble-schedule-btn'),
@@ -146,6 +167,25 @@ function setupEventListeners() {
         if (e.target === elements.modal) closeScheduleModal();
     });
 
+    // Schedule type change handler (show/hide time vs offset fields)
+    elements.scheduleType.addEventListener('change', () => {
+        const type = parseInt(elements.scheduleType.value);
+        if (type === 0) {
+            // Specific time
+            elements.timeGroup.classList.remove('hidden');
+            elements.offsetGroup.classList.add('hidden');
+        } else {
+            // Sunrise or Sunset - check if location is set
+            if (!settings.locationSet) {
+                showToast('Set your location in Settings first', 'error');
+                elements.scheduleType.value = '0';  // Reset to Specific Time
+                return;
+            }
+            elements.timeGroup.classList.add('hidden');
+            elements.offsetGroup.classList.remove('hidden');
+        }
+    });
+
     // BLE Schedule event listeners
     elements.addBleScheduleBtn.addEventListener('click', () => openBleScheduleModal());
     elements.closeBleModal.addEventListener('click', closeBleScheduleModal);
@@ -178,13 +218,6 @@ async function loadData() {
 async function loadStatus() {
     try {
         const status = await API.get('/status');
-
-        // Update title with version
-        if (status.version) {
-            const versionedTitle = `FeedMe v${status.version}`;
-            elements.appTitle.textContent = versionedTitle;
-            document.title = versionedTitle;
-        }
 
         // Battery
         elements.batteryStatus.textContent = status.batteryStatus || '--';
@@ -283,12 +316,12 @@ function renderSchedules() {
 
     elements.schedulesList.innerHTML = schedules.map(s => {
         const daysText = formatDays(s.days);
-        const localTime = formatTimeLocal(s.hour, s.minute);
+        const timeText = formatScheduleTime(s);
         return `
             <div class="schedule-item ${s.enabled ? '' : 'disabled'}" data-id="${s.id}">
                 <div class="schedule-info">
                     <div class="schedule-name">${s.name || 'Schedule'}</div>
-                    <div class="schedule-details">${localTime} - ${daysText}</div>
+                    <div class="schedule-details">${timeText} - ${daysText}</div>
                 </div>
                 <label class="toggle schedule-toggle" onclick="event.stopPropagation()">
                     <input type="checkbox" ${s.enabled ? 'checked' : ''}
@@ -324,13 +357,44 @@ function formatDays(daysBitmask) {
     return result.join('/');
 }
 
+function formatScheduleTime(schedule) {
+    // Schedule type: 0=specific time, 1=sunrise, 2=sunset
+    const type = schedule.scheduleType ?? 0;
+    if (type === 0) {
+        return formatTimeLocal(schedule.hour, schedule.minute);
+    }
+
+    const offset = schedule.sunOffset ?? 0;
+    let label = type === 1 ? 'Sunrise' : 'Sunset';
+
+    if (offset !== 0) {
+        const sign = offset > 0 ? '+' : '';
+        label += ` ${sign}${offset}m`;
+    }
+    return label;
+}
+
 async function loadSettings() {
     try {
         settings = await API.get('/settings');
         elements.motorDuration.value = settings.motorDuration || 5;
         elements.batteryType.value = settings.batteryType ?? 0;  // Default to SLA (0)
+        elements.detectedVoltage.textContent = settings.detectedVoltage || '--';
         elements.vacationMode.checked = settings.vacationMode || false;
+        elements.deviceVersion.textContent = settings.version || '--';
         elements.deviceId.textContent = settings.deviceId || '----';
+
+        // Location settings
+        if (settings.locationSet && settings.latitude !== undefined) {
+            elements.settingsLatitude.value = settings.latitude.toFixed(4);
+            elements.settingsLongitude.value = settings.longitude.toFixed(4);
+            elements.locationDisplay.textContent = `${settings.latitude.toFixed(2)}, ${settings.longitude.toFixed(2)}`;
+        } else {
+            elements.settingsLatitude.value = '';
+            elements.settingsLongitude.value = '';
+            elements.locationDisplay.textContent = 'Unknown';
+        }
+
         // Load feed history when settings are loaded
         loadFeedHistory();
     } catch (error) {
@@ -401,19 +465,51 @@ async function confirmFeed() {
         showToast('Feed command sent!', 'success');
     } catch (error) {
         console.error('Throw error:', error);
-        showToast('Failed to send command', 'error');
+        showToast(error.message || 'Failed to send command', 'error');
     } finally {
         elements.throwBtn.disabled = false;
         elements.throwBtn.innerHTML = '<span class="btn-icon">&#9654;</span> Feed Now';
     }
 }
 
+// Get user's location (returns null if denied or unavailable)
+async function getLocation() {
+    return new Promise((resolve) => {
+        if (!navigator.geolocation) {
+            console.log('Geolocation not supported');
+            resolve(null);
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                resolve({
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude
+                });
+            },
+            (error) => {
+                console.log('Geolocation error:', error.message);
+                resolve(null);
+            },
+            { timeout: 10000, maximumAge: 300000 }  // 10s timeout, cache for 5 min
+        );
+    });
+}
+
 async function handleSyncTime() {
     try {
         const epoch = Math.floor(Date.now() / 1000);
         const offset = new Date().getTimezoneOffset();  // Minutes behind UTC
-        await API.post('/time', { epoch, offset });
-        showToast('Time synced!', 'success');
+        const location = await getLocation();
+
+        const data = { epoch, offset };
+        if (location) {
+            data.latitude = location.latitude;
+            data.longitude = location.longitude;
+        }
+
+        await API.post('/time', data);
+        showToast(location ? 'Time & location synced!' : 'Time synced!', 'success');
         loadStatus();
     } catch (error) {
         console.error('Time sync error:', error);
@@ -422,13 +518,21 @@ async function handleSyncTime() {
 }
 
 function syncTimeOnLoad() {
-    // Auto-sync time on page load
+    // Auto-sync time and location on page load
     setTimeout(async () => {
         try {
             const epoch = Math.floor(Date.now() / 1000);
             const offset = new Date().getTimezoneOffset();  // Minutes behind UTC
-            await API.post('/time', { epoch, offset });
-            console.log('Auto time sync complete');
+            const location = await getLocation();
+
+            const data = { epoch, offset };
+            if (location) {
+                data.latitude = location.latitude;
+                data.longitude = location.longitude;
+            }
+
+            await API.post('/time', data);
+            console.log('Auto time sync complete' + (location ? ' (with location)' : ''));
         } catch (error) {
             console.error('Auto time sync failed:', error);
         }
@@ -448,8 +552,19 @@ async function handleSaveSettings() {
             vacationMode: elements.vacationMode.checked
         };
 
+        // Include location if provided
+        const lat = parseFloat(elements.settingsLatitude.value);
+        const lon = parseFloat(elements.settingsLongitude.value);
+        if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+            data.latitude = lat;
+            data.longitude = lon;
+        }
+
         await API.post('/settings', data);
         showToast('Settings saved!', 'success');
+
+        // Reload settings to update location status
+        await loadSettings();
         loadStatus();
     } catch (error) {
         console.error('Save settings error:', error);
@@ -472,9 +587,29 @@ function openScheduleModal(schedule = null) {
     elements.scheduleDuration.value = schedule?.duration || defaultDuration;
     elements.scheduleEnabled.checked = schedule?.enabled ?? true;
 
+    // Schedule type (0=specific time, 1=sunrise, 2=sunset)
+    const scheduleType = schedule?.scheduleType ?? 0;
+    elements.scheduleType.value = scheduleType;
+    elements.scheduleOffset.value = schedule?.sunOffset ?? 0;
+
+    // Show/hide time vs offset fields based on schedule type
+    if (scheduleType === 0) {
+        elements.timeGroup.classList.remove('hidden');
+        elements.offsetGroup.classList.add('hidden');
+    } else {
+        elements.timeGroup.classList.add('hidden');
+        elements.offsetGroup.classList.remove('hidden');
+    }
+
+    // Seasonal date fields
+    elements.scheduleStartMonth.value = schedule?.startMonth ?? -1;
+    elements.scheduleStartDay.value = schedule?.startDay ?? 1;
+    elements.scheduleEndMonth.value = schedule?.endMonth ?? -1;
+    elements.scheduleEndDay.value = schedule?.endDay ?? 31;
+
     // Days checkboxes
     const days = schedule?.days ?? 0x3E; // Default to weekdays
-    document.querySelectorAll('.day-selector input').forEach(cb => {
+    document.querySelectorAll('#feed-day-selector input').forEach(cb => {
         const day = parseInt(cb.dataset.day);
         cb.checked = (days & (1 << day)) !== 0;
     });
@@ -491,7 +626,7 @@ async function handleSaveSchedule() {
     try {
         // Collect days bitmask
         let days = 0;
-        document.querySelectorAll('.day-selector input').forEach(cb => {
+        document.querySelectorAll('#feed-day-selector input').forEach(cb => {
             if (cb.checked) {
                 days |= (1 << parseInt(cb.dataset.day));
             }
@@ -506,6 +641,35 @@ async function handleSaveSchedule() {
         let duration = parseInt(elements.scheduleDuration.value) || defaultDuration;
         duration = Math.max(1, Math.min(30, duration));
 
+        // Schedule type and offset
+        const scheduleType = parseInt(elements.scheduleType.value);
+        let sunOffset = parseInt(elements.scheduleOffset.value) || 0;
+        sunOffset = Math.max(-120, Math.min(120, sunOffset));
+
+        // Validate location for sunrise/sunset schedules
+        if (scheduleType !== 0 && !settings.locationSet) {
+            showToast('Set your location in Settings first', 'error');
+            return;
+        }
+
+        // Limit to 1 sunrise and 1 sunset schedule
+        if (scheduleType !== 0) {
+            const existingSchedule = schedules.find(s =>
+                s.scheduleType === scheduleType && s.id !== editingScheduleId
+            );
+            if (existingSchedule) {
+                const typeName = scheduleType === 1 ? 'sunrise' : 'sunset';
+                showToast(`Only one ${typeName} schedule allowed`, 'error');
+                return;
+            }
+        }
+
+        // Seasonal date fields
+        const startMonth = parseInt(elements.scheduleStartMonth.value);
+        const startDay = parseInt(elements.scheduleStartDay.value) || 1;
+        const endMonth = parseInt(elements.scheduleEndMonth.value);
+        const endDay = parseInt(elements.scheduleEndDay.value) || 31;
+
         const data = {
             name: elements.scheduleName.value || '',
             hour: utcHours,
@@ -513,10 +677,12 @@ async function handleSaveSchedule() {
             days: days,
             duration: duration,
             enabled: elements.scheduleEnabled.checked,
-            startMonth: -1,
-            startDay: -1,
-            endMonth: -1,
-            endDay: -1
+            scheduleType: scheduleType,
+            sunOffset: sunOffset,
+            startMonth: startMonth,
+            startDay: startDay,
+            endMonth: endMonth,
+            endDay: endDay
         };
 
         if (editingScheduleId) {

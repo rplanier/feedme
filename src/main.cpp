@@ -10,6 +10,7 @@
 #include "storage.h"
 #include "radio_manager.h"
 #include "rtc_manager.h"
+#include "sun_calc.h"
 
 // =============================================================================
 // State tracking
@@ -531,6 +532,54 @@ uint64_t calculateNextWakeTime() {
 // Feed schedule checking
 // =============================================================================
 
+// Get the effective feed time for a schedule (handles sunrise/sunset calculation)
+// Returns true if valid time was calculated, false if location not set for sun-based schedules
+bool getScheduleEffectiveTime(const Schedule* sched, const DateTime& now, int16_t tzOffset, int& hour, int& minute) {
+    Settings& settings = storage.getSettings();
+
+    if (sched->scheduleType == ScheduleType::SPECIFIC_TIME) {
+        // Use stored UTC time directly
+        hour = sched->hour;
+        minute = sched->minute;
+        return true;
+    }
+
+    // For sunrise/sunset, we need location
+    if (!settings.locationSet) {
+        return false;  // Can't calculate without location
+    }
+
+    int sunMinutes;
+    if (sched->scheduleType == ScheduleType::SUNRISE) {
+        sunMinutes = SunCalc::getSunrise(now.year(), now.month(), now.day(),
+                                          settings.latitude, settings.longitude, tzOffset);
+    } else {  // SUNSET
+        sunMinutes = SunCalc::getSunset(now.year(), now.month(), now.day(),
+                                         settings.latitude, settings.longitude, tzOffset);
+    }
+
+    if (sunMinutes < 0) {
+        return false;  // Sun doesn't rise/set at this location on this date
+    }
+
+    // Apply offset (sunOffset is in minutes, can be negative)
+    sunMinutes += sched->sunOffset;
+
+    // Normalize to valid range
+    while (sunMinutes < 0) sunMinutes += 1440;
+    while (sunMinutes >= 1440) sunMinutes -= 1440;
+
+    // Convert back to UTC for comparison (sunMinutes is in local time)
+    // UTC = local + offset (where offset is positive for behind UTC)
+    int utcMinutes = sunMinutes + tzOffset;
+    while (utcMinutes < 0) utcMinutes += 1440;
+    while (utcMinutes >= 1440) utcMinutes -= 1440;
+
+    hour = utcMinutes / 60;
+    minute = utcMinutes % 60;
+    return true;
+}
+
 void checkFeedSchedules() {
     if (storage.getSettings().vacationMode) {
         return;  // Vacation mode - no feeding
@@ -554,6 +603,7 @@ void checkFeedSchedules() {
     int currentDay = now.dayOfTheWeek();
     int currentMonth = now.month();
     int currentDayOfMonth = now.day();
+    int16_t tzOffset = storage.getSettings().timezoneOffset;
 
     int scheduleCount = storage.getScheduleCount();
     for (int i = 0; i < scheduleCount; i++) {
@@ -569,8 +619,14 @@ void checkFeedSchedules() {
         // Check seasonal dates
         if (!sched->isActiveOnDate(currentMonth, currentDayOfMonth)) continue;
 
+        // Get effective time (handles sunrise/sunset calculation)
+        int schedHour, schedMinute;
+        if (!getScheduleEffectiveTime(sched, now, tzOffset, schedHour, schedMinute)) {
+            continue;  // Skip if can't calculate time (e.g., location not set)
+        }
+
         // Check if it's time (within the check interval window)
-        if (sched->hour == currentHour && sched->minute == currentMinute) {
+        if (schedHour == currentHour && schedMinute == currentMinute) {
             Serial.printf("Executing feed schedule: %s\n", sched->name);
 
             // Mark as executed

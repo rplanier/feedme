@@ -21,6 +21,7 @@ public:
     BatteryStatus getStatus() const { return status; }
     const char* getStatusText() const;
     bool isCharging() const { return charging; }
+    bool is12V() const { return voltage > BATTERY_TYPE_THRESHOLD; }
 
     // Check if motor should be disabled due to low battery
     bool isMotorAllowed() const { return status != BatteryStatus::CRITICAL; }

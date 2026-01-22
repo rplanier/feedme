@@ -208,6 +208,13 @@ enum class BatteryType : uint8_t {
     GEL = 2     // Gel Cell (slightly lower voltages)
 };
 
+// Schedule trigger type (specific time vs sunrise/sunset)
+enum class ScheduleType : uint8_t {
+    SPECIFIC_TIME = 0,  // Feed at exact hour:minute
+    SUNRISE = 1,        // Feed at sunrise +/- offset
+    SUNSET = 2          // Feed at sunset +/- offset
+};
+
 // Battery status thresholds (lead-acid, based on state of charge curves)
 // These are open-circuit voltages - under load will be slightly lower
 //
@@ -295,6 +302,9 @@ constexpr char PREF_MOTOR_DURATION[] = "motorDur";
 constexpr char PREF_VACATION_MODE[] = "vacation";
 constexpr char PREF_TIME_SYNCED[] = "timeSynced";
 constexpr char PREF_BATTERY_TYPE[] = "battType";
+constexpr char PREF_LATITUDE[] = "latitude";
+constexpr char PREF_LONGITUDE[] = "longitude";
+constexpr char PREF_LOCATION_SET[] = "locSet";
 
 // LittleFS paths
 constexpr char SCHEDULES_FILE[] = "/schedules.json";

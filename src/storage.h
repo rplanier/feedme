@@ -11,8 +11,8 @@
 struct Schedule {
     uint16_t id;                    // Unique ID
     char name[48];                  // Display name (auto-generated or custom)
-    uint8_t hour;                   // 0-23 (stored as UTC)
-    uint8_t minute;                 // 0-59
+    uint8_t hour;                   // 0-23 (stored as UTC) - used for SPECIFIC_TIME
+    uint8_t minute;                 // 0-59 - used for SPECIFIC_TIME
     uint8_t days;                   // Bitmask: bit 0 = Sun, bit 1 = Mon, ... bit 6 = Sat
     int16_t startMonth;             // 1-12, or -1 for no start date
     int16_t startDay;               // 1-31
@@ -20,6 +20,8 @@ struct Schedule {
     int16_t endDay;                 // 1-31
     uint8_t duration;               // Override duration (0 = use default)
     bool enabled;
+    ScheduleType scheduleType;      // SPECIFIC_TIME, SUNRISE, or SUNSET
+    int16_t sunOffset;              // Minutes offset from sunrise/sunset (-120 to +120)
 
     // Helper methods
     bool isActiveOnDay(uint8_t dayOfWeek) const;  // 0 = Sunday
@@ -91,6 +93,9 @@ struct Settings {
     SleepTimeout sleepTimeout;      // Display/sleep timeout
     int16_t timezoneOffset;         // Minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
     BatteryType batteryType;        // Battery chemistry (SLA/AGM/GEL) for accurate state-of-charge
+    float latitude;                 // GPS latitude for sunrise/sunset calculation
+    float longitude;                // GPS longitude for sunrise/sunset calculation
+    bool locationSet;               // True if location has been set by user
 
     uint16_t getSleepTimeoutSeconds() const {
         return ::getSleepTimeoutSeconds(sleepTimeout);

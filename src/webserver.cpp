@@ -486,6 +486,8 @@ void FeedMeWebServer::handleCreateSchedule(AsyncWebServerRequest* request, uint8
     schedule.endDay = doc["endDay"] | -1;
     schedule.duration = doc["duration"] | 0;
     schedule.enabled = doc["enabled"] | true;
+    schedule.scheduleType = static_cast<ScheduleType>(doc["scheduleType"] | 0);
+    schedule.sunOffset = doc["sunOffset"] | 0;
 
     if (storage.addSchedule(schedule)) {
         display.refreshIfFeedSchedulesAffected();
@@ -513,16 +515,18 @@ void FeedMeWebServer::handleUpdateSchedule(AsyncWebServerRequest* request, uint8
     }
 
     Schedule schedule = *existing;
-    if (doc.containsKey("name")) strlcpy(schedule.name, doc["name"], sizeof(schedule.name));
-    if (doc.containsKey("hour")) schedule.hour = doc["hour"];
-    if (doc.containsKey("minute")) schedule.minute = doc["minute"];
-    if (doc.containsKey("days")) schedule.days = doc["days"];
-    if (doc.containsKey("startMonth")) schedule.startMonth = doc["startMonth"];
-    if (doc.containsKey("startDay")) schedule.startDay = doc["startDay"];
-    if (doc.containsKey("endMonth")) schedule.endMonth = doc["endMonth"];
-    if (doc.containsKey("endDay")) schedule.endDay = doc["endDay"];
-    if (doc.containsKey("duration")) schedule.duration = doc["duration"];
-    if (doc.containsKey("enabled")) schedule.enabled = doc["enabled"];
+    if (doc["name"].is<const char*>()) strlcpy(schedule.name, doc["name"], sizeof(schedule.name));
+    if (doc["hour"].is<uint8_t>()) schedule.hour = doc["hour"];
+    if (doc["minute"].is<uint8_t>()) schedule.minute = doc["minute"];
+    if (doc["days"].is<uint8_t>()) schedule.days = doc["days"];
+    if (doc["startMonth"].is<int16_t>()) schedule.startMonth = doc["startMonth"];
+    if (doc["startDay"].is<int16_t>()) schedule.startDay = doc["startDay"];
+    if (doc["endMonth"].is<int16_t>()) schedule.endMonth = doc["endMonth"];
+    if (doc["endDay"].is<int16_t>()) schedule.endDay = doc["endDay"];
+    if (doc["duration"].is<uint8_t>()) schedule.duration = doc["duration"];
+    if (doc["enabled"].is<bool>()) schedule.enabled = doc["enabled"];
+    if (doc["scheduleType"].is<uint8_t>()) schedule.scheduleType = static_cast<ScheduleType>(doc["scheduleType"].as<uint8_t>());
+    if (doc["sunOffset"].is<int16_t>()) schedule.sunOffset = doc["sunOffset"];
 
     if (storage.updateSchedule(id, schedule)) {
         display.refreshIfFeedSchedulesAffected();
@@ -551,10 +555,7 @@ void FeedMeWebServer::handleThrow(AsyncWebServerRequest* request) {
         return;
     }
 
-    if (!battery.isMotorAllowed()) {
-        sendError(request, 403, "Battery too low");
-        return;
-    }
+    // No battery check for manual feeds - user explicitly requested it
 
     if (throwCallback) {
         throwCallback();
@@ -586,11 +587,27 @@ void FeedMeWebServer::handleTimeSync(AsyncWebServerRequest* request, uint8_t* da
 
     // Store timezone offset if provided (in minutes, like JS getTimezoneOffset())
     // getTimezoneOffset() returns positive for behind UTC (e.g., 360 for CST/UTC-6)
-    if (doc.containsKey("offset")) {
+    bool settingsChanged = false;
+    if (doc["offset"].is<int16_t>()) {
         int16_t offsetMinutes = doc["offset"];
         storage.getSettings().timezoneOffset = offsetMinutes;
-        storage.saveSettings();
+        settingsChanged = true;
         Serial.printf("WebServer: Timezone offset set to %d minutes\n", offsetMinutes);
+    }
+
+    // Store location if provided (for sunrise/sunset calculation)
+    if (doc["latitude"].is<float>() && doc["longitude"].is<float>()) {
+        float lat = doc["latitude"];
+        float lon = doc["longitude"];
+        storage.getSettings().latitude = lat;
+        storage.getSettings().longitude = lon;
+        storage.getSettings().locationSet = true;
+        settingsChanged = true;
+        Serial.printf("WebServer: Location set to %.4f, %.4f\n", lat, lon);
+    }
+
+    if (settingsChanged) {
+        storage.saveSettings();
     }
 
     if (timeUpdateCallback) {
@@ -611,6 +628,7 @@ void FeedMeWebServer::handleGetSettings(AsyncWebServerRequest* request) {
     Settings& settings = storage.getSettings();
 
     JsonDocument doc;
+    doc["version"] = FEEDME_VERSION;
     doc["deviceId"] = settings.deviceId;
     doc["motorDuration"] = settings.motorDuration;
     doc["vacationMode"] = settings.vacationMode;
@@ -627,6 +645,14 @@ void FeedMeWebServer::handleGetSettings(AsyncWebServerRequest* request) {
         case BatteryType::SLA:
         default: doc["batteryTypeName"] = "SLA"; break;
     }
+
+    // Detected battery voltage class (6V or 12V)
+    doc["detectedVoltage"] = battery.is12V() ? "12V" : "6V";
+
+    // Location for sunrise/sunset calculation
+    doc["latitude"] = settings.latitude;
+    doc["longitude"] = settings.longitude;
+    doc["locationSet"] = settings.locationSet;
 
     String response;
     serializeJson(doc, response);
@@ -667,6 +693,12 @@ void FeedMeWebServer::handleUpdateSettings(AsyncWebServerRequest* request, uint8
         if (type <= 2) {
             settings.batteryType = static_cast<BatteryType>(type);
         }
+    }
+    if (doc["latitude"].is<float>() && doc["longitude"].is<float>()) {
+        settings.latitude = doc["latitude"];
+        settings.longitude = doc["longitude"];
+        settings.locationSet = true;
+        Serial.printf("WebServer: Location updated to %.4f, %.4f\n", settings.latitude, settings.longitude);
     }
 
     storage.saveSettings();
