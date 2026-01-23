@@ -54,7 +54,7 @@ public:
     void formatDateTime(char* buffer, size_t len);   // "Mon Jan 01 HH:MM"
 
     // Format helpers with timezone conversion (UTC -> Local)
-    // tzOffset is minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
+    // tzOffset is minutes from UTC (negative = west of UTC, like Swift's secondsFromGMT)
     void formatTimeLocal(char* buffer, size_t len, int16_t tzOffset);
     void formatDateLocal(char* buffer, size_t len, int16_t tzOffset);
     void formatDateTimeLocal(char* buffer, size_t len, int16_t tzOffset);

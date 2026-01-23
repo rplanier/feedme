@@ -846,6 +846,81 @@ void Display::showFeedCancelled() {
 }
 
 // =============================================================================
+// BLE Pairing PIN Display
+// =============================================================================
+
+void Display::showPairingPin(const char* pin) {
+    epd.setFullWindow();
+    epd.firstPage();
+    do {
+        epd.fillScreen(GxEPD_WHITE);
+
+        int16_t x1, y1;
+        uint16_t w, h;
+
+        // Header (black bar with white text)
+        epd.fillRect(0, 0, SCREEN_WIDTH, 28, GxEPD_BLACK);
+        epd.setTextColor(GxEPD_WHITE);
+        epd.setFont(&FreeSansBold12pt7b);
+        const char* header = "Pairing Request";
+        epd.getTextBounds(header, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 22);
+        epd.print(header);
+        epd.setTextColor(GxEPD_BLACK);
+
+        // Instruction text
+        epd.setFont(&FreeSans9pt7b);
+        const char* instruction = "Enter this PIN in the app:";
+        epd.getTextBounds(instruction, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 52);
+        epd.print(instruction);
+
+        // Large PIN display (centered, with spacing between digits)
+        epd.setFont(&FreeSansBold18pt7b);
+
+        // Calculate total width with spacing
+        char digitStr[2] = {0, 0};
+        uint16_t totalWidth = 0;
+        uint16_t digitWidths[4];
+        uint16_t spacing = 16;  // Space between digits
+
+        for (int i = 0; i < 4 && pin[i]; i++) {
+            digitStr[0] = pin[i];
+            epd.getTextBounds(digitStr, 0, 0, &x1, &y1, &digitWidths[i], &h);
+            totalWidth += digitWidths[i];
+        }
+        totalWidth += spacing * 3;  // 3 gaps between 4 digits
+
+        // Draw each digit
+        int16_t xPos = (SCREEN_WIDTH - totalWidth) / 2;
+        int16_t yPos = 95;
+
+        for (int i = 0; i < 4 && pin[i]; i++) {
+            digitStr[0] = pin[i];
+            epd.setCursor(xPos, yPos);
+            epd.print(digitStr);
+            xPos += digitWidths[i] + spacing;
+        }
+
+        // Bottom instruction
+        epd.setFont(&FreeSans9pt7b);
+        const char* bottom = "PIN expires on disconnect";
+        epd.getTextBounds(bottom, 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 120);
+        epd.print(bottom);
+
+    } while (epd.nextPage());
+
+    Serial.printf("Display: Showing pairing PIN: %s\n", pin);
+}
+
+void Display::hidePairingPin() {
+    // Return to normal display by forcing a full refresh of the current screen
+    forceFullRefresh();
+    Serial.println("Display: Hiding pairing PIN, returning to normal display");
+}
+
+// =============================================================================
 // Screensaver
 // =============================================================================
 

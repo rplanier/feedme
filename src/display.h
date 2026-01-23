@@ -103,6 +103,10 @@ public:
     void showFeedingNow();                          // Show "feeding now" message
     void showFeedCancelled();                       // Show cancelled message
 
+    // BLE pairing PIN display
+    void showPairingPin(const char* pin);           // Show pairing PIN prominently
+    void hidePairingPin();                          // Clear PIN and return to normal display
+
     // Request manual feed countdown (called from button handler on Overview screen)
     bool shouldStartFeedCountdown() const { return feedCountdownRequested; }
     void clearFeedCountdownRequest() { feedCountdownRequested = false; }

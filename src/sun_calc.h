@@ -49,7 +49,7 @@ private:
     }
 
     // Calculate sun time (sunrise or sunset)
-    // tzOffsetMinutes: positive = behind UTC (like JS getTimezoneOffset), so local = UTC - offset
+    // tzOffsetMinutes: negative = west of UTC (like Swift's secondsFromGMT), so local = UTC + offset
     static int calculateSunTime(int year, int month, int day, float latitude, float longitude, int16_t tzOffsetMinutes, bool sunrise) {
         // Julian day
         float jd = julianDay(year, month, day);
@@ -125,9 +125,9 @@ private:
         }
 
         // Convert from UTC to local time
-        // tzOffsetMinutes is positive for locations behind UTC (e.g., US timezones)
-        // Local time = UTC time - offset
-        float localTime = sunTime - tzOffsetMinutes;
+        // tzOffsetMinutes is negative for locations west of UTC (e.g., US timezones)
+        // Local time = UTC time + offset
+        float localTime = sunTime + tzOffsetMinutes;
 
         // Normalize to 0-1440 range
         while (localTime < 0) localTime += 1440.0f;

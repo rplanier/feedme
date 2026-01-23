@@ -26,6 +26,10 @@ constexpr uint32_t SCHEDULE_CHECK_INTERVAL = 10000;  // Check schedules every 10
 uint8_t lastExecutedScheduleDay = 0;
 uint32_t executedScheduleMask = 0;      // Bitmask of schedule IDs executed today
 
+// Feed overlap protection - minimum time between feeds (milliseconds)
+constexpr uint32_t MIN_FEED_INTERVAL_MS = 60000;  // 60 seconds
+uint32_t lastFeedCompletedTime = 0;               // millis() when last feed finished
+
 // Last reset reason (stored at boot for debugging)
 static esp_reset_reason_t lastResetReason = ESP_RST_UNKNOWN;
 
@@ -168,7 +172,16 @@ void loop() {
     // Update subsystems
     buttons.update();
     battery.update();
+
+    // Track motor state to detect when feed completes
+    bool wasMotorRunning = motor.isRunning();
     motor.update();
+
+    // Update last feed completion time when motor stops
+    if (wasMotorRunning && !motor.isRunning()) {
+        lastFeedCompletedTime = millis();
+        Serial.println("Feed completed - updating lastFeedCompletedTime");
+    }
 
     // Drain ALL pending button events before refreshing display
     // This allows rapid presses during e-paper refresh to skip intermediate screens
@@ -625,16 +638,31 @@ void checkFeedSchedules() {
 
         // Check if it's time (within the check interval window)
         if (schedHour == currentHour && schedMinute == currentMinute) {
-            Serial.printf("Executing feed schedule: %s\n", sched->name);
+            Serial.printf("Schedule %s triggered at %02d:%02d\n", sched->name, schedHour, schedMinute);
 
-            // Mark as executed
+            // Mark as executed (even if we skip due to overlap/running)
             executedScheduleMask |= (1U << sched->id);
+
+            // Check if motor is already running (overlap protection)
+            if (motor.isRunning()) {
+                Serial.println("Motor already running - skipping feed");
+                continue;
+            }
+
+            // Check if a feed was recently completed (overlap protection)
+            uint32_t timeSinceLastFeed = millis() - lastFeedCompletedTime;
+            if (lastFeedCompletedTime > 0 && timeSinceLastFeed < MIN_FEED_INTERVAL_MS) {
+                Serial.printf("Feed skipped - only %lu ms since last feed\n", timeSinceLastFeed);
+                continue;
+            }
 
             // Check battery before running motor
             if (battery.getStatus() == BatteryStatus::CRITICAL) {
                 Serial.println("Battery critical - skipping feed");
                 continue;
             }
+
+            Serial.printf("Executing feed schedule: %s\n", sched->name);
 
             // Run motor with schedule-specific or default duration
             uint8_t duration = sched->duration > 0 ? sched->duration : motor.getDefaultDuration();

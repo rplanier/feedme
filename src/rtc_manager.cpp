@@ -158,8 +158,8 @@ void RTCManager::formatDateTime(char* buffer, size_t len) {
 
 DateTime RTCManager::nowLocal(int16_t tzOffset) {
     DateTime utc = now();
-    // Local = UTC - offset (offset is positive for behind UTC)
-    int32_t localUnix = utc.unixtime() - (tzOffset * 60);
+    // Local = UTC + offset (offset is negative for west of UTC, like Swift's secondsFromGMT)
+    int32_t localUnix = utc.unixtime() + (tzOffset * 60);
     return DateTime(localUnix);
 }
 
