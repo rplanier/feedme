@@ -6,6 +6,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <atomic>
+#include <map>
 
 // =============================================================================
 // BLE UUIDs for FeedMe GATT Service
@@ -97,6 +98,11 @@ public:
     // Chunked data transfer for large payloads
     void sendChunkedData(BLECharacteristic* pChar, const String& data);
 
+    // Chunked write reception - assembles chunks from iOS
+    // Returns true if data is complete (either non-chunked or last chunk received)
+    // Returns false if more chunks expected
+    bool receiveChunkedWrite(const BLEUUID& charUuid, const String& value, String& assembledData);
+
     // Pairing PIN management
     void generatePairingPin();                      // Generate random 4-digit PIN
     const char* getPairingPin() const { return session.generatedPin; }
@@ -112,6 +118,10 @@ private:
     char deviceName[16] = "";  // "FeedMe-XXXX"
 
     BLESession session;
+
+    // Buffers for assembling chunked writes from iOS
+    // Key: characteristic UUID string, Value: accumulated data
+    std::map<String, String> writeBuffers;
 
     BLEServer* pServer = nullptr;
 

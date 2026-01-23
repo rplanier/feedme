@@ -268,8 +268,15 @@ void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     String value = pCharacteristic->getValue();
     if (value.length() == 0) return;
 
+    // Handle chunked writes from iOS
+    String assembledData;
+    if (!manager->receiveChunkedWrite(pCharacteristic->getUUID(), value, assembledData)) {
+        // More chunks expected, wait for them
+        return;
+    }
+
     JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, value);
+    DeserializationError error = deserializeJson(doc, assembledData);
     if (error) {
         Serial.printf("BLE: Settings JSON parse error: %s\n", error.c_str());
         return;
@@ -375,7 +382,14 @@ void FeedSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     String value = pCharacteristic->getValue();
     if (value.length() == 0) return;
 
-    if (storage.setSchedulesFromJson(value)) {
+    // Handle chunked writes from iOS (large schedule arrays)
+    String assembledData;
+    if (!manager->receiveChunkedWrite(pCharacteristic->getUUID(), value, assembledData)) {
+        // More chunks expected, wait for them
+        return;
+    }
+
+    if (storage.setSchedulesFromJson(assembledData)) {
         Serial.println("BLE: Feed Schedules updated");
         manager->updateCharacteristicValues();  // Refresh cached values
     } else {
@@ -598,9 +612,16 @@ void BleSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     String value = pCharacteristic->getValue();
     if (value.length() == 0) return;
 
+    // Handle chunked writes from iOS (large schedule arrays)
+    String assembledData;
+    if (!manager->receiveChunkedWrite(pCharacteristic->getUUID(), value, assembledData)) {
+        // More chunks expected, wait for them
+        return;
+    }
+
     // Parse JSON array and update BLE schedules
     JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, value);
+    DeserializationError error = deserializeJson(doc, assembledData);
     if (error) {
         Serial.printf("BLE: BLE Schedules JSON parse error: %s\n", error.c_str());
         return;
@@ -1021,4 +1042,70 @@ void BLEManager::sendChunkedData(BLECharacteristic* pChar, const String& data) {
         // Small delay between chunks to allow BLE stack to process
         delay(20);
     }
+}
+
+// =============================================================================
+// Chunked Write Reception
+// =============================================================================
+// Protocol (same as chunked reads but for writes from iOS):
+// Byte 0: Chunk sequence number (0-based)
+// Byte 1: Flags - 0x01 = more chunks follow, 0x00 = last chunk
+// Bytes 2+: JSON data
+//
+// Non-chunked writes start with '[' or '{' (JSON array or object)
+// =============================================================================
+
+bool BLEManager::receiveChunkedWrite(const BLEUUID& charUuid, const String& value, String& assembledData) {
+    if (value.length() < 2) {
+        // Too short to be chunked, treat as complete data
+        assembledData = value;
+        return true;
+    }
+
+    // Check if this looks like chunked data (first two bytes are header, not JSON)
+    char firstChar = value.charAt(0);
+    char secondChar = value.charAt(1);
+
+    // JSON arrays start with '[', objects with '{', these are typically ASCII 91 and 123
+    // Chunked data has sequence number (0-255) and flags (0 or 1) as first two bytes
+    // A chunk sequence of '[' (91) or '{' (123) with flags of 0 or 1 is unlikely
+    // but we check more carefully: if second byte is 0x00 or 0x01, it's likely chunked
+    bool looksChunked = (secondChar == 0x00 || secondChar == 0x01) &&
+                        (firstChar != '[' && firstChar != '{');
+
+    if (!looksChunked) {
+        // Not chunked - return the data as-is
+        assembledData = value;
+        writeBuffers.erase(charUuid.toString());  // Clear any partial buffer
+        return true;
+    }
+
+    // This is chunked data
+    uint8_t chunkNum = (uint8_t)firstChar;
+    bool moreChunks = (secondChar == 0x01);
+    String chunkData = value.substring(2);
+
+    String bufferKey = charUuid.toString();
+
+    // If this is chunk 0, clear any existing buffer
+    if (chunkNum == 0) {
+        writeBuffers[bufferKey] = "";
+    }
+
+    // Append chunk data to buffer
+    writeBuffers[bufferKey] += chunkData;
+
+    Serial.printf("BLE: Received write chunk %d (%d bytes, %s)\n",
+                  chunkNum, chunkData.length(), moreChunks ? "more" : "last");
+
+    if (!moreChunks) {
+        // Last chunk - return assembled data
+        assembledData = writeBuffers[bufferKey];
+        writeBuffers.erase(bufferKey);
+        Serial.printf("BLE: Assembled %d bytes from chunked writes\n", assembledData.length());
+        return true;
+    }
+
+    // More chunks expected
+    return false;
 }
