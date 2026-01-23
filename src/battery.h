@@ -23,6 +23,9 @@ public:
     bool isCharging() const { return charging; }
     bool is12V() const { return voltage > BATTERY_TYPE_THRESHOLD; }
 
+    // Get battery percentage (0-100) based on voltage
+    int getPercentage() const;
+
     // Check if motor should be disabled due to low battery
     bool isMotorAllowed() const { return status != BatteryStatus::CRITICAL; }
 

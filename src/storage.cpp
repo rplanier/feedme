@@ -1,5 +1,9 @@
 #include "storage.h"
+#include "sun_calc.h"
+#include "time_format.h"
 #include <time.h>
+#include <mbedtls/sha256.h>
+#include <mbedtls/base64.h>
 
 Storage storage;
 
@@ -169,22 +173,7 @@ void Storage::saveSettings() {
 
 void Storage::loadSchedules() {
     feedSchedules.load(SCHEDULES_FILE, "schedules", deserializeFeedSchedule);
-
-    // Create default schedule if none exist
-    if (feedSchedules.getCount() == 0) {
-        Serial.println("Storage: No schedules found, creating default");
-        Schedule defaultSched = {};
-        defaultSched.hour = 13;  // 13:00 UTC = 7:00 AM CST / 8:00 AM EST
-        defaultSched.minute = 0;
-        defaultSched.days = DAYS_ALL;
-        defaultSched.enabled = true;
-        defaultSched.duration = 0;
-        defaultSched.startMonth = -1;
-        defaultSched.startDay = -1;
-        defaultSched.endMonth = -1;
-        defaultSched.endDay = -1;
-        addSchedule(defaultSched);
-    }
+    Serial.printf("Storage: Loaded %d feed schedules\n", feedSchedules.getCount());
 }
 
 void Storage::saveSchedules() {
@@ -244,8 +233,9 @@ String Storage::getSchedulesJson() {
         JsonObject obj = arr.add<JsonObject>();
         obj["id"] = s->id;
         obj["name"] = s->name;
-        obj["time"] = String(s->hour < 10 ? "0" : "") + s->hour + ":" +
-                      String(s->minute < 10 ? "0" : "") + s->minute;
+        char timeStr[6];
+        formatTime24Hour(timeStr, sizeof(timeStr), s->hour, s->minute);
+        obj["time"] = timeStr;
         obj["hour"] = s->hour;
         obj["minute"] = s->minute;
         obj["days"] = s->days;
@@ -324,25 +314,16 @@ bool Schedule::isActiveOnDate(int month, int day) const {
 }
 
 void Schedule::generateName(int16_t tzOffset) {
-    char timeStr[8];
+    char timeStr[12];
 
     // Convert UTC hour to local time for display
-    int localHour = hour - (tzOffset / 60);
+    int localHour = hour + (tzOffset / 60);
     localHour = (localHour + 24) % 24;
 
-    int displayHour = localHour;
-    const char* ampm = "am";
-
-    if (localHour == 0) {
-        displayHour = 12;
-    } else if (localHour == 12) {
-        ampm = "pm";
-    } else if (localHour > 12) {
-        displayHour = localHour - 12;
-        ampm = "pm";
-    }
-
-    snprintf(timeStr, sizeof(timeStr), "%d:%02d%s", displayHour, minute, ampm);
+    // Use lowercase am/pm for schedule names
+    FormattedTime ft(localHour);
+    const char* ampmLower = (ft.ampm[0] == 'A') ? "am" : "pm";
+    snprintf(timeStr, sizeof(timeStr), "%d:%02d%s", ft.displayHour, minute, ampmLower);
 
     // Determine day pattern
     const char* dayPattern = "";
@@ -383,6 +364,10 @@ bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
     int currentMin = timeinfo.tm_min;
     int currentMonth = timeinfo.tm_mon + 1;
     int currentDayOfMonth = timeinfo.tm_mday;
+    int currentYear = timeinfo.tm_year + 1900;
+
+    Settings& settings = getSettings();
+    int16_t tzOffset = settings.timezoneOffset;
 
     int bestDaysAway = 8;  // More than a week = not found
     int bestHour = -1;
@@ -399,20 +384,64 @@ bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
 
             if (!s->isActiveOnDay(checkDay)) continue;
 
+            // Calculate the actual run time for this schedule
+            int schedHour, schedMinute;
+
+            if (s->scheduleType == ScheduleType::SPECIFIC_TIME) {
+                // Use stored time directly (already in local time)
+                schedHour = s->hour;
+                schedMinute = s->minute;
+            } else if (settings.locationSet) {
+                // Calculate sunrise/sunset for the target day
+                // For days in the future, adjust the date
+                struct tm futureTime = timeinfo;
+                futureTime.tm_mday += d;
+                mktime(&futureTime);  // Normalize the date
+
+                int sunMinutes;
+                if (s->scheduleType == ScheduleType::SUNRISE) {
+                    sunMinutes = SunCalc::getSunrise(futureTime.tm_year + 1900,
+                                                      futureTime.tm_mon + 1,
+                                                      futureTime.tm_mday,
+                                                      settings.latitude,
+                                                      settings.longitude,
+                                                      tzOffset);
+                } else {  // SUNSET
+                    sunMinutes = SunCalc::getSunset(futureTime.tm_year + 1900,
+                                                     futureTime.tm_mon + 1,
+                                                     futureTime.tm_mday,
+                                                     settings.latitude,
+                                                     settings.longitude,
+                                                     tzOffset);
+                }
+
+                if (sunMinutes < 0) continue;  // Sun doesn't rise/set
+
+                // Apply offset
+                sunMinutes += s->sunOffset;
+                while (sunMinutes < 0) sunMinutes += 1440;
+                while (sunMinutes >= 1440) sunMinutes -= 1440;
+
+                schedHour = sunMinutes / 60;
+                schedMinute = sunMinutes % 60;
+            } else {
+                continue;  // Can't calculate without location
+            }
+
             // Check if this schedule time is still upcoming
             bool isToday = (d == 0);
-            bool isPast = isToday && (s->hour < currentHour ||
-                         (s->hour == currentHour && s->minute <= currentMin));
+            bool isPast = isToday && (schedHour < currentHour ||
+                         (schedHour == currentHour && schedMinute <= currentMin));
 
             if (isPast) continue;
 
             // This is a valid upcoming run
             if (d < bestDaysAway ||
                 (d == bestDaysAway &&
-                 (s->hour < bestHour || (s->hour == bestHour && s->minute < bestMinute)))) {
+                 (schedHour < bestHour || (schedHour == bestHour && schedMinute < bestMinute)))) {
                 bestDaysAway = d;
-                bestHour = s->hour;
-                bestMinute = s->minute;
+                bestHour = schedHour;
+                bestMinute = schedMinute;
             }
             break;  // Found the next occurrence for this schedule
         }
@@ -482,10 +511,11 @@ String Storage::getBleSchedulesJson() {
         JsonObject obj = arr.add<JsonObject>();
         obj["id"] = s->id;
         obj["name"] = s->name;
-        obj["startTime"] = String(s->startHour < 10 ? "0" : "") + s->startHour + ":" +
-                           String(s->startMinute < 10 ? "0" : "") + s->startMinute;
-        obj["endTime"] = String(s->endHour < 10 ? "0" : "") + s->endHour + ":" +
-                         String(s->endMinute < 10 ? "0" : "") + s->endMinute;
+        char startTimeStr[6], endTimeStr[6];
+        formatTime24Hour(startTimeStr, sizeof(startTimeStr), s->startHour, s->startMinute);
+        formatTime24Hour(endTimeStr, sizeof(endTimeStr), s->endHour, s->endMinute);
+        obj["startTime"] = startTimeStr;
+        obj["endTime"] = endTimeStr;
         obj["startHour"] = s->startHour;
         obj["startMinute"] = s->startMinute;
         obj["endHour"] = s->endHour;
@@ -575,19 +605,6 @@ void Storage::resetToDefaults() {
     initDefaultSettings();
     saveSettings();
 
-    // Create default schedule
-    Schedule defaultSched = {};
-    defaultSched.hour = 13;  // 13:00 UTC = 7:00 AM CST / 8:00 AM EST
-    defaultSched.minute = 0;
-    defaultSched.days = DAYS_ALL;
-    defaultSched.enabled = true;
-    defaultSched.duration = 0;
-    defaultSched.startMonth = -1;
-    defaultSched.startDay = -1;
-    defaultSched.endMonth = -1;
-    defaultSched.endDay = -1;
-    addSchedule(defaultSched);
-
     Serial.println("Storage: Reset complete");
 }
 
@@ -622,20 +639,29 @@ void Storage::loadFeedHistory() {
         return;
     }
 
-    feedHistoryCount = 0;
-    feedHistoryHead = 0;
-
-    // Load events in order (most recent first)
+    // Count events first
+    int eventCount = 0;
     for (JsonObject obj : arr) {
-        if (feedHistoryCount >= MAX_FEED_HISTORY) break;
+        eventCount++;
+        if (eventCount >= MAX_FEED_HISTORY) break;
+    }
 
-        FeedEvent& event = feedHistory[feedHistoryCount];
+    feedHistoryCount = eventCount;
+    feedHistoryHead = (eventCount > 0) ? eventCount - 1 : 0;
+
+    // Load events in reverse order: file has newest first, but circular buffer
+    // expects oldest at low indices, newest at head (high index)
+    int loadIndex = eventCount - 1;
+    for (JsonObject obj : arr) {
+        if (loadIndex < 0) break;
+
+        FeedEvent& event = feedHistory[loadIndex];
         event.timestamp = obj["timestamp"] | 0;
         event.duration = obj["duration"] | 0;
         event.manual = obj["manual"] | false;
         strlcpy(event.scheduleName, obj["scheduleName"] | "", sizeof(event.scheduleName));
 
-        feedHistoryCount++;
+        loadIndex--;
     }
 
     Serial.printf("Storage: Loaded %d feed history entries\n", feedHistoryCount);
@@ -726,4 +752,246 @@ String Storage::getFeedHistoryJson() {
     String result;
     serializeJson(doc, result);
     return result;
+}
+
+// =============================================================================
+// PIN Authentication
+// =============================================================================
+
+// Helper: compute SHA-256 hash of PIN + deviceId as salt
+static void computePinHash(const char* pin, const char* salt, uint8_t* hashOut) {
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&ctx, (const uint8_t*)pin, strlen(pin));
+    mbedtls_sha256_update(&ctx, (const uint8_t*)salt, strlen(salt));
+    mbedtls_sha256_finish(&ctx, hashOut);
+    mbedtls_sha256_free(&ctx);
+}
+
+bool Storage::isPinSet() {
+    return prefs.getBool(PREF_PIN_SET, false);
+}
+
+bool Storage::setPin(const char* pin) {
+    // Validate PIN length
+    size_t len = strlen(pin);
+    if (len < PIN_MIN_LENGTH || len > PIN_MAX_LENGTH) {
+        Serial.printf("Storage: Invalid PIN length %d (must be %d-%d)\n",
+                      len, PIN_MIN_LENGTH, PIN_MAX_LENGTH);
+        return false;
+    }
+
+    // Validate all digits
+    for (size_t i = 0; i < len; i++) {
+        if (!isdigit(pin[i])) {
+            Serial.println("Storage: PIN must contain only digits");
+            return false;
+        }
+    }
+
+    // Compute hash with deviceId as salt
+    uint8_t hash[32];
+    computePinHash(pin, deviceId, hash);
+
+    // Store hash as base64 string (shorter than hex)
+    char hashStr[45];  // Base64 of 32 bytes = 44 chars + null
+    size_t outLen;
+    mbedtls_base64_encode((uint8_t*)hashStr, sizeof(hashStr), &outLen, hash, 32);
+    hashStr[outLen] = '\0';
+
+    prefs.putString(PREF_PIN_HASH, hashStr);
+    prefs.putBool(PREF_PIN_SET, true);
+    resetFailedPinAttempts();
+
+    Serial.println("Storage: PIN set successfully");
+    return true;
+}
+
+bool Storage::verifyPin(const char* pin) {
+    if (!isPinSet()) {
+        // No PIN set = always valid (unlocked device)
+        return true;
+    }
+
+    // Check lockout
+    uint32_t lockoutEnd = getLockoutEndTime();
+    if (lockoutEnd > 0 && millis() < lockoutEnd) {
+        Serial.println("Storage: PIN verification blocked - device locked out");
+        return false;
+    }
+
+    // Compute hash of provided PIN
+    uint8_t hash[32];
+    computePinHash(pin, deviceId, hash);
+
+    // Convert to base64 for comparison
+    char hashStr[45];
+    size_t outLen;
+    mbedtls_base64_encode((uint8_t*)hashStr, sizeof(hashStr), &outLen, hash, 32);
+    hashStr[outLen] = '\0';
+
+    // Compare with stored hash
+    String storedHash = prefs.getString(PREF_PIN_HASH, "");
+    if (storedHash == hashStr) {
+        resetFailedPinAttempts();
+        Serial.println("Storage: PIN verified successfully");
+        return true;
+    }
+
+    // Wrong PIN - increment failed attempts
+    incrementFailedPinAttempts();
+    Serial.printf("Storage: Wrong PIN (%d failed attempts)\n", getFailedPinAttempts());
+    return false;
+}
+
+void Storage::clearPin() {
+    prefs.remove(PREF_PIN_HASH);
+    prefs.putBool(PREF_PIN_SET, false);
+    resetFailedPinAttempts();
+    Serial.println("Storage: PIN cleared");
+}
+
+uint8_t Storage::getFailedPinAttempts() {
+    return prefs.getUChar(PREF_PIN_FAILS, 0);
+}
+
+void Storage::incrementFailedPinAttempts() {
+    uint8_t attempts = getFailedPinAttempts() + 1;
+    prefs.putUChar(PREF_PIN_FAILS, attempts);
+
+    // Apply lockout if max attempts reached
+    if (attempts >= PIN_MAX_ATTEMPTS) {
+        setLockout(PIN_LOCKOUT_DURATION_MS);
+    }
+}
+
+void Storage::resetFailedPinAttempts() {
+    prefs.putUChar(PREF_PIN_FAILS, 0);
+    prefs.putULong(PREF_PIN_LOCKOUT, 0);
+}
+
+uint32_t Storage::getLockoutEndTime() {
+    return prefs.getULong(PREF_PIN_LOCKOUT, 0);
+}
+
+void Storage::setLockout(uint32_t durationMs) {
+    uint32_t endTime = millis() + durationMs;
+    prefs.putULong(PREF_PIN_LOCKOUT, endTime);
+    Serial.printf("Storage: Device locked out for %d seconds\n", durationMs / 1000);
+}
+
+// =============================================================================
+// Paired Device Management (for BLE pairing security)
+// =============================================================================
+
+bool Storage::isPairedDevice(const char* bleAddress) {
+    if (!bleAddress || strlen(bleAddress) == 0) {
+        return false;
+    }
+
+    int count = getPairedDeviceCount();
+    for (int i = 0; i < count; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "%s%d", PREF_PAIRED_PREFIX, i);
+        String stored = prefs.getString(key, "");
+        if (stored.equalsIgnoreCase(bleAddress)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Storage::addPairedDevice(const char* bleAddress) {
+    if (!bleAddress || strlen(bleAddress) == 0) {
+        return false;
+    }
+
+    // Check if already paired
+    if (isPairedDevice(bleAddress)) {
+        Serial.printf("Storage: Device %s already paired\n", bleAddress);
+        return true;
+    }
+
+    int count = getPairedDeviceCount();
+
+    // Check limit
+    if (count >= MAX_PAIRED_DEVICES) {
+        // Remove oldest device to make room
+        Serial.println("Storage: Paired device limit reached, removing oldest");
+        for (int i = 0; i < count - 1; i++) {
+            char keyOld[12], keyNew[12];
+            snprintf(keyOld, sizeof(keyOld), "%s%d", PREF_PAIRED_PREFIX, i + 1);
+            snprintf(keyNew, sizeof(keyNew), "%s%d", PREF_PAIRED_PREFIX, i);
+            String addr = prefs.getString(keyOld, "");
+            prefs.putString(keyNew, addr.c_str());
+        }
+        count = MAX_PAIRED_DEVICES - 1;
+    }
+
+    // Add new device
+    char key[12];
+    snprintf(key, sizeof(key), "%s%d", PREF_PAIRED_PREFIX, count);
+    prefs.putString(key, bleAddress);
+    prefs.putUChar(PREF_PAIRED_COUNT, count + 1);
+
+    Serial.printf("Storage: Paired device added: %s (total: %d)\n", bleAddress, count + 1);
+    return true;
+}
+
+bool Storage::removePairedDevice(const char* bleAddress) {
+    if (!bleAddress || strlen(bleAddress) == 0) {
+        return false;
+    }
+
+    int count = getPairedDeviceCount();
+    int foundIndex = -1;
+
+    // Find the device
+    for (int i = 0; i < count; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "%s%d", PREF_PAIRED_PREFIX, i);
+        String stored = prefs.getString(key, "");
+        if (stored.equalsIgnoreCase(bleAddress)) {
+            foundIndex = i;
+            break;
+        }
+    }
+
+    if (foundIndex < 0) {
+        return false;
+    }
+
+    // Shift remaining devices down
+    for (int i = foundIndex; i < count - 1; i++) {
+        char keyOld[12], keyNew[12];
+        snprintf(keyOld, sizeof(keyOld), "%s%d", PREF_PAIRED_PREFIX, i + 1);
+        snprintf(keyNew, sizeof(keyNew), "%s%d", PREF_PAIRED_PREFIX, i);
+        String addr = prefs.getString(keyOld, "");
+        prefs.putString(keyNew, addr.c_str());
+    }
+
+    // Remove last slot
+    char lastKey[12];
+    snprintf(lastKey, sizeof(lastKey), "%s%d", PREF_PAIRED_PREFIX, count - 1);
+    prefs.remove(lastKey);
+    prefs.putUChar(PREF_PAIRED_COUNT, count - 1);
+
+    Serial.printf("Storage: Paired device removed: %s\n", bleAddress);
+    return true;
+}
+
+void Storage::clearAllPairedDevices() {
+    int count = getPairedDeviceCount();
+    for (int i = 0; i < count; i++) {
+        char key[12];
+        snprintf(key, sizeof(key), "%s%d", PREF_PAIRED_PREFIX, i);
+        prefs.remove(key);
+    }
+    prefs.putUChar(PREF_PAIRED_COUNT, 0);
+    Serial.println("Storage: All paired devices cleared");
+}
+
+int Storage::getPairedDeviceCount() {
+    return prefs.getUChar(PREF_PAIRED_COUNT, 0);
 }

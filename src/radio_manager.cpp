@@ -1,9 +1,21 @@
 #include "radio_manager.h"
+#include "config.h"
 
 RadioManager radioManager;
 
 void RadioManager::begin(const char* id) {
     deviceId = id;
+    bootTime = millis();
+
+#if defined(TARGET_XIAO_ESP32C6) && USE_EXTERNAL_ANTENNA
+    // Configure RF switch for external antenna (FM8625H)
+    // Must be done BEFORE BLE/WiFi initialization
+    pinMode(PIN_RF_SW_PWR, OUTPUT);
+    digitalWrite(PIN_RF_SW_PWR, LOW);   // Power on the RF switch
+    pinMode(PIN_RF_PORT, OUTPUT);
+    digitalWrite(PIN_RF_PORT, HIGH);    // Select external antenna port
+    Serial.println("RadioManager: External antenna enabled");
+#endif
 
     // Initialize WiFi manager (but don't start WiFi yet)
     wifiManager.begin(deviceId);
@@ -12,6 +24,10 @@ void RadioManager::begin(const char* id) {
     bleManager.begin(deviceId);
 
     Serial.println("RadioManager: Initialized");
+}
+
+bool RadioManager::isInBootGracePeriod() const {
+    return (millis() - bootTime) < BLE_BOOT_GRACE_PERIOD_MS;
 }
 
 void RadioManager::update() {
@@ -69,6 +85,15 @@ void RadioManager::transitionToBle() {
         stopWifi();
     }
 
+    // During boot grace period, always start BLE regardless of schedules
+    // This allows initial app connection for configuration
+    if (isInBootGracePeriod()) {
+        Serial.println("RadioManager: Boot grace period active - starting BLE");
+        startBle();
+        currentMode = Mode::BLE;
+        return;
+    }
+
     // Check if BLE should be active based on schedules
     if (storage.shouldBleBeActive()) {
         startBle();
@@ -92,6 +117,16 @@ void RadioManager::transitionToIdle() {
 }
 
 void RadioManager::checkBleSchedules() {
+    // During boot grace period, keep BLE on regardless of schedules
+    if (isInBootGracePeriod()) {
+        if (currentMode == Mode::IDLE) {
+            Serial.println("RadioManager: Boot grace period - starting BLE");
+            startBle();
+            currentMode = Mode::BLE;
+        }
+        return;  // Don't enforce schedules during grace period
+    }
+
     bool shouldBeActive = storage.shouldBleBeActive();
 
     // Don't start BLE while WiFi is running
@@ -108,25 +143,13 @@ void RadioManager::checkBleSchedules() {
 
 void RadioManager::startWifi() {
     wifiManager.start();
-
-    // Start web server
-    if (!webServerActive) {
-        webServer.begin();
-        if (throwCallback) {
-            webServer.setThrowCallback(throwCallback);
-        }
-        webServerActive = true;
-        Serial.println("RadioManager: WebServer started");
-    }
+    // WiFi is now running - ready for future OTA endpoint
+    Serial.println("RadioManager: WiFi started (ready for OTA)");
 }
 
 void RadioManager::stopWifi() {
-    if (webServerActive) {
-        webServer.stop();
-        webServerActive = false;
-        Serial.println("RadioManager: WebServer stopped");
-    }
     wifiManager.stop();
+    Serial.println("RadioManager: WiFi stopped");
 }
 
 void RadioManager::startBle() {
@@ -172,12 +195,4 @@ const char* RadioManager::getWifiSSID() const {
 
 const char* RadioManager::getWifiPassword() const {
     return wifiManager.getPassword();
-}
-
-void RadioManager::setThrowCallback(ThrowCallback callback) {
-    throwCallback = callback;
-    // If web server is already active, update its callback too
-    if (webServerActive) {
-        webServer.setThrowCallback(callback);
-    }
 }

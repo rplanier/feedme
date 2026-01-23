@@ -3,7 +3,6 @@
 #include <Arduino.h>
 #include "ble_manager.h"
 #include "wifi_manager.h"
-#include "webserver.h"
 #include "storage.h"
 
 // Radio state management - handles mutual exclusion between WiFi and BLE
@@ -13,7 +12,7 @@ public:
     enum class Mode {
         IDLE,   // Neither WiFi nor BLE active
         BLE,    // BLE advertising active
-        WIFI    // WiFi AP active with web server
+        WIFI    // WiFi AP active (for future OTA)
     };
 
     void begin(const char* deviceId);
@@ -47,18 +46,20 @@ public:
     const char* getWifiSSID() const;
     const char* getWifiPassword() const;
 
-    // Set motor throw callback for web server
-    void setThrowCallback(ThrowCallback callback);
-
 private:
     Mode currentMode = Mode::IDLE;
-    bool webServerActive = false;
     const char* deviceId = nullptr;
-    ThrowCallback throwCallback = nullptr;
+    uint32_t bootTime = 0;  // millis() at boot for grace period tracking
 
     // Delay constants for radio settling
     static constexpr uint32_t BLE_DEINIT_DELAY_MS = 100;
     static constexpr uint32_t BLE_WAKE_DELAY_MS = 500;
+
+    // Grace period after boot before BLE schedules are enforced
+    static constexpr uint32_t BLE_BOOT_GRACE_PERIOD_MS = 5 * 60 * 1000;  // 5 minutes
+
+    // Check if still within boot grace period
+    bool isInBootGracePeriod() const;
 
     void startWifi();
     void stopWifi();

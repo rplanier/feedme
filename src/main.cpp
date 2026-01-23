@@ -11,6 +11,7 @@
 #include "radio_manager.h"
 #include "rtc_manager.h"
 #include "sun_calc.h"
+#include "time_format.h"
 
 // =============================================================================
 // State tracking
@@ -105,9 +106,6 @@ void setup() {
     // Initialize radio manager (handles both WiFi and BLE)
     Serial.println("Initializing radio...");
     radioManager.begin(storage.getDeviceId());
-    radioManager.setThrowCallback([]() {
-        motor.startThrow();
-    });
 
     // Handle wake reason
     switch (wakeReason) {
@@ -130,10 +128,10 @@ void setup() {
         default:
             Serial.println("Cold boot or other wake reason");
             updateActivityTimer();
-            // Auto-enable WiFi on cold boot for easier initial setup
-            // The 5-minute idle timeout will shut it off automatically
-            Serial.println("Auto-starting WiFi for initial setup...");
-            radioManager.transitionToWifi();
+            // Start in BLE mode (lower power than WiFi)
+            // If BLE schedules exist, allow 5-minute grace period after boot
+            Serial.println("Starting BLE...");
+            radioManager.transitionToBle();
             break;
     }
 
@@ -570,8 +568,8 @@ bool getScheduleEffectiveTime(const Schedule* sched, const DateTime& now, int16_
     while (sunMinutes >= 1440) sunMinutes -= 1440;
 
     // Convert back to UTC for comparison (sunMinutes is in local time)
-    // UTC = local + offset (where offset is positive for behind UTC)
-    int utcMinutes = sunMinutes + tzOffset;
+    // UTC = local - offset (where offset is negative for west of UTC)
+    int utcMinutes = sunMinutes - tzOffset;
     while (utcMinutes < 0) utcMinutes += 1440;
     while (utcMinutes >= 1440) utcMinutes -= 1440;
 
@@ -681,11 +679,13 @@ void formatNextFeedTime(char* buffer, size_t len) {
     int nearestMinute = 0;
 
     // Check schedules for today and the next 7 days
+    int scheduleCount = storage.getScheduleCount();
+    Serial.printf("formatNextFeedTime: scheduleCount=%d\n", scheduleCount);
+
     for (int dayOffset = 0; dayOffset < 7; dayOffset++) {
         int checkDay = (currentDay + dayOffset) % 7;
         uint32_t baseSeconds = dayOffset * 86400;
 
-        int scheduleCount = storage.getScheduleCount();
         for (int i = 0; i < scheduleCount; i++) {
             Schedule* sched = storage.getSchedule(i);
             if (!sched || !sched->enabled) continue;
@@ -705,21 +705,54 @@ void formatNextFeedTime(char* buffer, size_t len) {
                 nearestDay = checkDay;
                 nearestHour = sched->hour;
                 nearestMinute = sched->minute;
+                Serial.printf("formatNextFeedTime: Found schedule id=%d hour=%d min=%d enabled=%d\n",
+                              sched->id, sched->hour, sched->minute, sched->enabled);
             }
         }
     }
 
-    if (nearestDay >= 0) {
-        // Convert UTC hour to local time for display
-        int16_t tzOffset = storage.getSettings().timezoneOffset;
-        int localHour = nearestHour - (tzOffset / 60);
-        localHour = (localHour + 24) % 24;
+    // Only format if we actually found a schedule
+    if (nearestDay < 0) {
+        return;  // Keep "None" default
+    }
 
-        // Format as "Today HH:MM" or "Mon HH:MM"
-        if (nearestDay == currentDay && nearestSeconds < 86400) {
-            snprintf(buffer, len, "Today %02d:%02d", localHour, nearestMinute);
-        } else {
-            snprintf(buffer, len, "%s %02d:%02d", DAY_NAMES[nearestDay], localHour, nearestMinute);
-        }
+    // Convert UTC hour to local time for display
+    int16_t tzOffset = storage.getSettings().timezoneOffset;
+    int localHour = nearestHour + (tzOffset / 60);
+
+    // Track if converting to local time pushed us to a different day
+    int dayAdjust = 0;
+    if (localHour < 0) {
+        localHour += 24;
+        dayAdjust = -1;  // Went back a day
+    } else if (localHour >= 24) {
+        localHour -= 24;
+        dayAdjust = 1;   // Went forward a day
+    }
+
+    // Use centralized 12-hour formatting
+    FormattedTime ft(localHour);
+
+    // Determine if this is "today" in local time
+    // Convert current UTC time to local to get the local day
+    int currentLocalHour = currentHour + (tzOffset / 60);
+    int currentDayAdjust = 0;
+    if (currentLocalHour < 0) {
+        currentDayAdjust = -1;
+    } else if (currentLocalHour >= 24) {
+        currentDayAdjust = 1;
+    }
+
+    // It's "today" only if both times are on the same local day
+    bool isToday = (nearestSeconds < 86400) && (dayAdjust == currentDayAdjust);
+
+    // Adjust nearestDay to local day for display
+    int localNearestDay = (nearestDay + dayAdjust + 7) % 7;
+
+    // Format as "Today H:MM AM" or "Mon H:MM PM"
+    if (isToday) {
+        snprintf(buffer, len, "Today %d:%02d %s", ft.displayHour, nearestMinute, ft.ampm);
+    } else {
+        snprintf(buffer, len, "%s %d:%02d %s", DAY_NAMES[localNearestDay], ft.displayHour, nearestMinute, ft.ampm);
     }
 }

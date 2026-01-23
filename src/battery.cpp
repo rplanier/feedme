@@ -207,3 +207,14 @@ const char* Battery::getStatusText() const {
             return "???";
     }
 }
+
+int Battery::getPercentage() const {
+    // Linear mapping based on typical lead-acid battery voltage ranges
+    if (is12V()) {
+        // 12V battery: 10.8V (0%) to 12.7V (100%)
+        return constrain(map(voltage * 10, 108, 127, 0, 100), 0, 100);
+    } else {
+        // 6V battery: 5.4V (0%) to 6.4V (100%)
+        return constrain(map(voltage * 10, 54, 64, 0, 100), 0, 100);
+    }
+}
