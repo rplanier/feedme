@@ -138,6 +138,7 @@ void Storage::initDefaultSettings() {
     settings.sleepTimeout = DEFAULT_SLEEP_TIMEOUT;
     settings.timezoneOffset = 0;  // UTC
     settings.batteryType = BatteryType::SLA;  // Default to SLA
+    settings.antennaType = DEFAULT_ANTENNA_TYPE;  // Default to rod antenna
     settings.latitude = 0.0f;
     settings.longitude = 0.0f;
     settings.locationSet = false;
@@ -149,6 +150,7 @@ void Storage::loadSettings() {
     settings.sleepTimeout = static_cast<SleepTimeout>(prefs.getUChar("sleepTmout", static_cast<uint8_t>(DEFAULT_SLEEP_TIMEOUT)));
     settings.timezoneOffset = prefs.getShort("tzOffset", 0);  // Default to UTC
     settings.batteryType = static_cast<BatteryType>(prefs.getUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(BatteryType::SLA)));
+    settings.antennaType = static_cast<AntennaType>(prefs.getUChar(PREF_ANTENNA_TYPE, static_cast<uint8_t>(DEFAULT_ANTENNA_TYPE)));
     settings.latitude = prefs.getFloat(PREF_LATITUDE, 0.0f);
     settings.longitude = prefs.getFloat(PREF_LONGITUDE, 0.0f);
     settings.locationSet = prefs.getBool(PREF_LOCATION_SET, false);
@@ -161,6 +163,7 @@ void Storage::saveSettings() {
     prefs.putUChar("sleepTmout", static_cast<uint8_t>(settings.sleepTimeout));
     prefs.putShort("tzOffset", settings.timezoneOffset);
     prefs.putUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(settings.batteryType));
+    prefs.putUChar(PREF_ANTENNA_TYPE, static_cast<uint8_t>(settings.antennaType));
     prefs.putFloat(PREF_LATITUDE, settings.latitude);
     prefs.putFloat(PREF_LONGITUDE, settings.longitude);
     prefs.putBool(PREF_LOCATION_SET, settings.locationSet);

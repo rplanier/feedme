@@ -5,8 +5,12 @@
 #include "rtc_manager.h"
 #include "display.h"
 #include "time_format.h"
+#include "radio_manager.h"
 #include <ArduinoJson.h>
 #include <esp_random.h>
+
+// NimBLE header for Coded PHY (BLE Long Range) support
+#include <host/ble_gap.h>
 
 BLEManager bleManager;
 
@@ -20,6 +24,20 @@ void ServerCallbacks::onConnect(BLEServer* pServer) {
 
     uint16_t connId = pServer->getConnId();
     Serial.printf("BLE: Client connected (conn_id: %d)\n", connId);
+
+    // Request Coded PHY (S=8) for this connection - maximum range (~300m)
+    // BLE_GAP_LE_PHY_CODED_S8 = 2 specifies S=8 coding (125 kbps, longest range)
+    int phyResult = ble_gap_set_prefered_le_phy(
+        connId,
+        BLE_GAP_LE_PHY_CODED_MASK,   // TX: prefer Coded PHY
+        BLE_GAP_LE_PHY_CODED_MASK,   // RX: prefer Coded PHY
+        BLE_GAP_LE_PHY_CODED_S8      // S=8 coding for maximum range
+    );
+    if (phyResult == 0) {
+        Serial.println("BLE: Requested Coded PHY (S=8) for long range");
+    } else {
+        Serial.printf("BLE: PHY update request returned: %d\n", phyResult);
+    }
 }
 
 void ServerCallbacks::onDisconnect(BLEServer* pServer) {
@@ -227,6 +245,7 @@ void SettingsCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     doc["motorDuration"] = settings.motorDuration;
     doc["vacationMode"] = settings.vacationMode;
     doc["batteryType"] = static_cast<uint8_t>(settings.batteryType);
+    doc["antennaType"] = static_cast<uint8_t>(settings.antennaType);
     doc["latitude"] = settings.latitude;
     doc["longitude"] = settings.longitude;
     doc["locationSet"] = settings.locationSet;
@@ -277,6 +296,15 @@ void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         uint8_t bt = doc["batteryType"];
         if (bt <= 2) {  // Valid range: 0=SLA, 1=AGM, 2=GEL
             settings.batteryType = static_cast<BatteryType>(bt);
+            changed = true;
+        }
+    }
+
+    if (doc["antennaType"].is<int>()) {
+        uint8_t at = doc["antennaType"];
+        if (at <= 1) {  // Valid range: 0=ROD, 1=ONBOARD
+            settings.antennaType = static_cast<AntennaType>(at);
+            radioManager.setAntenna(settings.antennaType);
             changed = true;
         }
     }
@@ -629,6 +657,19 @@ void BLEManager::begin(const char* deviceId) {
 
     // Set maximum TX power for better range
     BLEDevice::setPower(ESP_PWR_LVL_P9);  // +9 dBm (maximum)
+
+    // Enable Coded PHY (BLE Long Range) for ~300m range vs ~50m with standard 1M PHY
+    // S=8 coding: 125 kbps data rate, maximum range
+    // This sets the default PHY preference for all future connections
+    int phyResult = ble_gap_set_prefered_default_le_phy(
+        BLE_GAP_LE_PHY_CODED_MASK,  // TX: prefer Coded PHY
+        BLE_GAP_LE_PHY_CODED_MASK   // RX: prefer Coded PHY
+    );
+    if (phyResult == 0) {
+        Serial.println("BLE: Coded PHY (Long Range) enabled as default");
+    } else {
+        Serial.printf("BLE: Failed to set Coded PHY default: %d\n", phyResult);
+    }
 
     // Request larger MTU for big JSON payloads (schedules, history)
     BLEDevice::setMTU(517);  // Max is 517 (512 data + 5 overhead)

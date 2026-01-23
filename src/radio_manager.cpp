@@ -7,14 +7,15 @@ void RadioManager::begin(const char* id) {
     deviceId = id;
     bootTime = millis();
 
-#if defined(TARGET_XIAO_ESP32C6) && USE_EXTERNAL_ANTENNA
-    // Configure RF switch for external antenna (FM8625H)
+#if defined(TARGET_XIAO_ESP32C6)
+    // Initialize RF switch pins (FM8625H)
     // Must be done BEFORE BLE/WiFi initialization
     pinMode(PIN_RF_SW_PWR, OUTPUT);
     digitalWrite(PIN_RF_SW_PWR, LOW);   // Power on the RF switch
     pinMode(PIN_RF_PORT, OUTPUT);
-    digitalWrite(PIN_RF_PORT, HIGH);    // Select external antenna port
-    Serial.println("RadioManager: External antenna enabled");
+
+    // Set antenna based on stored settings
+    setAntenna(storage.getSettings().antennaType);
 #endif
 
     // Initialize WiFi manager (but don't start WiFi yet)
@@ -195,4 +196,21 @@ const char* RadioManager::getWifiSSID() const {
 
 const char* RadioManager::getWifiPassword() const {
     return wifiManager.getPassword();
+}
+
+void RadioManager::setAntenna(AntennaType type) {
+#if defined(TARGET_XIAO_ESP32C6)
+    // FM8625H RF switch control:
+    // PIN_RF_PORT HIGH = external rod antenna
+    // PIN_RF_PORT LOW = onboard PCB antenna
+    if (type == AntennaType::ROD) {
+        digitalWrite(PIN_RF_PORT, HIGH);
+        Serial.println("RadioManager: External rod antenna selected");
+    } else {
+        digitalWrite(PIN_RF_PORT, LOW);
+        Serial.println("RadioManager: Onboard PCB antenna selected");
+    }
+#else
+    (void)type;  // Unused on other targets
+#endif
 }

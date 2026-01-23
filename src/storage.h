@@ -29,16 +29,16 @@ struct Schedule {
     void generateName(int16_t tzOffset);  // Auto-generate name from schedule properties (uses local time)
 
     // UTC/Local time conversion helpers
-    // tzOffset is minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
+    // tzOffset is minutes from UTC (negative = west of UTC, like Swift's secondsFromGMT)
     uint8_t getLocalHour(int16_t tzOffset) const {
-        // Convert UTC hour to local: local = UTC - offset/60
-        int localHour = hour - (tzOffset / 60);
+        // Convert UTC hour to local: local = UTC + offset/60
+        int localHour = hour + (tzOffset / 60);
         return (localHour + 24) % 24;
     }
 
     static uint8_t toUtcHour(uint8_t localHour, int16_t tzOffset) {
-        // Convert local hour to UTC: UTC = local + offset/60
-        int utcHour = localHour + (tzOffset / 60);
+        // Convert local hour to UTC: UTC = local - offset/60
+        int utcHour = localHour - (tzOffset / 60);
         return (utcHour + 24) % 24;
     }
 };
@@ -58,19 +58,19 @@ struct BleSchedule {
     bool isActiveOnDay(uint8_t dayOfWeek) const;  // 0 = Sunday
     bool isActiveNow(int hour, int minute, int dayOfWeek) const;
 
-    // UTC/Local time conversion helpers
+    // UTC/Local time conversion helpers (tzOffset negative = west of UTC)
     uint8_t getLocalStartHour(int16_t tzOffset) const {
-        int localHour = startHour - (tzOffset / 60);
+        int localHour = startHour + (tzOffset / 60);
         return (localHour + 24) % 24;
     }
 
     uint8_t getLocalEndHour(int16_t tzOffset) const {
-        int localHour = endHour - (tzOffset / 60);
+        int localHour = endHour + (tzOffset / 60);
         return (localHour + 24) % 24;
     }
 
     static uint8_t toUtcHour(uint8_t localHour, int16_t tzOffset) {
-        int utcHour = localHour + (tzOffset / 60);
+        int utcHour = localHour - (tzOffset / 60);
         return (utcHour + 24) % 24;
     }
 };
@@ -91,8 +91,9 @@ struct Settings {
     uint8_t motorDuration;          // Default motor duration in seconds
     bool vacationMode;
     SleepTimeout sleepTimeout;      // Display/sleep timeout
-    int16_t timezoneOffset;         // Minutes from UTC (positive = behind UTC, like JS getTimezoneOffset)
+    int16_t timezoneOffset;         // Minutes from UTC (negative = west of UTC, like Swift's secondsFromGMT)
     BatteryType batteryType;        // Battery chemistry (SLA/AGM/GEL) for accurate state-of-charge
+    AntennaType antennaType;        // Antenna selection (rod/onboard)
     float latitude;                 // GPS latitude for sunrise/sunset calculation
     float longitude;                // GPS longitude for sunrise/sunset calculation
     bool locationSet;               // True if location has been set by user
@@ -113,6 +114,16 @@ struct Settings {
         }
     }
 };
+
+// Pairing/authentication constants
+constexpr uint8_t PIN_LENGTH = 4;                     // Generated pairing PIN is always 4 digits
+constexpr uint8_t PIN_MAX_ATTEMPTS = 5;
+constexpr uint32_t PIN_LOCKOUT_DURATION_MS = 60000;   // 1 minute lockout after max attempts
+constexpr uint8_t MAX_PAIRED_DEVICES = 8;             // Max number of remembered paired devices
+
+// Legacy constants (deprecated)
+constexpr uint8_t PIN_MIN_LENGTH = 4;
+constexpr uint8_t PIN_MAX_LENGTH = 6;
 
 class Storage {
 public:
@@ -166,6 +177,26 @@ public:
 
     // Reset all settings and schedules to defaults
     void resetToDefaults();
+
+    // Paired device management (for BLE security)
+    bool isPairedDevice(const char* bleAddress);     // Check if device is in paired list
+    bool addPairedDevice(const char* bleAddress);    // Add device to paired list (max 8)
+    bool removePairedDevice(const char* bleAddress); // Remove device from paired list
+    void clearAllPairedDevices();                    // Remove all paired devices
+    int getPairedDeviceCount();                      // Number of paired devices
+
+    // PIN lockout (for failed pairing attempts)
+    uint8_t getFailedPinAttempts();
+    void incrementFailedPinAttempts();
+    void resetFailedPinAttempts();
+    uint32_t getLockoutEndTime();                    // Returns 0 if not locked out
+    void setLockout(uint32_t durationMs);
+
+    // Legacy PIN functions (deprecated - kept for migration)
+    bool isPinSet();
+    bool setPin(const char* pin);
+    bool verifyPin(const char* pin);
+    void clearPin();
 
 private:
     Preferences prefs;

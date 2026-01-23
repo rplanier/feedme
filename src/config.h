@@ -19,6 +19,16 @@ constexpr char FEEDME_VERSION[] = "0.1b";
 // #define TARGET_ESP32C3_SUPERMINI  // Original board (has antenna issues)
 
 // =============================================================================
+// Antenna Type (defined early for use in pin definitions)
+// =============================================================================
+
+// Antenna type for BLE/WiFi communication
+enum class AntennaType : uint8_t {
+    ROD = 0,      // External rod antenna (default, better range)
+    ONBOARD = 1   // Onboard PCB antenna (compact, reduced range)
+};
+
+// =============================================================================
 // Pin Definitions
 // =============================================================================
 
@@ -97,6 +107,13 @@ constexpr uint8_t PIN_BATTERY_ADC = 1;    // D1 - BATT_SENSE (ADC capable)
 
 // Solar panel voltage sensing (voltage divider 100K/27K)
 constexpr uint8_t PIN_SOLAR_ADC = 0;      // D0 - SOLAR_SENSE (ADC capable)
+
+// RF switch for external antenna (FM8625H)
+constexpr uint8_t PIN_RF_SW_PWR = 3;      // RF switch power pin
+constexpr uint8_t PIN_RF_PORT = 14;       // RF port select pin
+
+// Default antenna type (can be changed at runtime via app)
+constexpr AntennaType DEFAULT_ANTENNA_TYPE = AntennaType::ROD;
 
 #elif defined(TARGET_ESP32C3_SUPERMINI)
 // -----------------------------------------------------------------------------
@@ -305,6 +322,17 @@ constexpr char PREF_BATTERY_TYPE[] = "battType";
 constexpr char PREF_LATITUDE[] = "latitude";
 constexpr char PREF_LONGITUDE[] = "longitude";
 constexpr char PREF_LOCATION_SET[] = "locSet";
+constexpr char PREF_ANTENNA_TYPE[] = "antennaType";
+
+// Paired device keys (for BLE pairing security)
+constexpr char PREF_PAIRED_COUNT[] = "pairCount";     // Number of paired devices
+constexpr char PREF_PAIRED_PREFIX[] = "paired";       // Prefix for paired device addresses (paired0, paired1, etc.)
+constexpr char PREF_PIN_FAILS[] = "pinFails";         // Failed pairing attempt counter
+constexpr char PREF_PIN_LOCKOUT[] = "pinLockout";     // Lockout end timestamp (millis)
+
+// Legacy PIN keys (deprecated - kept for migration)
+constexpr char PREF_PIN_HASH[] = "pinHash";           // SHA-256 hash of PIN + deviceId salt
+constexpr char PREF_PIN_SET[] = "pinSet";             // Boolean: is PIN configured
 
 // LittleFS paths
 constexpr char SCHEDULES_FILE[] = "/schedules.json";

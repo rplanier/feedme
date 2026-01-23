@@ -46,6 +46,9 @@ public:
     const char* getWifiSSID() const;
     const char* getWifiPassword() const;
 
+    // Antenna control
+    void setAntenna(AntennaType type);
+
 private:
     Mode currentMode = Mode::IDLE;
     const char* deviceId = nullptr;
