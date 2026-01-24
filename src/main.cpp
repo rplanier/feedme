@@ -706,6 +706,10 @@ void formatNextFeedTime(char* buffer, size_t len) {
         return;
     }
 
+    Settings& settings = storage.getSettings();
+    int16_t tzOffset = settings.timezoneOffset;
+
+    // Get current local time
     DateTime now = rtcManager.now();
     int currentHour = now.hour();
     int currentMinute = now.minute();
@@ -713,7 +717,7 @@ void formatNextFeedTime(char* buffer, size_t len) {
     uint32_t currentDaySeconds = currentHour * 3600 + currentMinute * 60;
 
     uint32_t nearestSeconds = UINT32_MAX;
-    int nearestDay = -1;
+    int nearestDayOffset = -1;
     int nearestHour = 0;
     int nearestMinute = 0;
 
@@ -725,13 +729,22 @@ void formatNextFeedTime(char* buffer, size_t len) {
         int checkDay = (currentDay + dayOffset) % 7;
         uint32_t baseSeconds = dayOffset * 86400;
 
+        // Calculate the date for this day offset (needed for sunrise/sunset)
+        DateTime checkDate = DateTime(now.unixtime() + (dayOffset * 86400));
+
         for (int i = 0; i < scheduleCount; i++) {
             Schedule* sched = storage.getSchedule(i);
             if (!sched || !sched->enabled) continue;
             if (!sched->isActiveOnDay(checkDay)) continue;
-            if (!sched->isActiveOnDate(now.month(), now.day())) continue;
+            if (!sched->isActiveOnDate(checkDate.month(), checkDate.day())) continue;
 
-            uint32_t schedSeconds = sched->hour * 3600 + sched->minute * 60;
+            // Get the effective time for this schedule (handles sunrise/sunset calculation)
+            int schedHour, schedMinute;
+            if (!getScheduleEffectiveTime(sched, checkDate, tzOffset, schedHour, schedMinute)) {
+                continue;  // Couldn't calculate time (e.g., no location for sun-based schedule)
+            }
+
+            uint32_t schedSeconds = schedHour * 3600 + schedMinute * 60;
 
             // Skip if this is today and the time has passed
             if (dayOffset == 0 && schedSeconds <= currentDaySeconds) {
@@ -741,57 +754,28 @@ void formatNextFeedTime(char* buffer, size_t len) {
             uint32_t totalSeconds = baseSeconds + schedSeconds - currentDaySeconds;
             if (totalSeconds < nearestSeconds) {
                 nearestSeconds = totalSeconds;
-                nearestDay = checkDay;
-                nearestHour = sched->hour;
-                nearestMinute = sched->minute;
-                DEBUG_PRINTF("formatNextFeedTime: Found schedule id=%d hour=%d min=%d enabled=%d\n",
-                              sched->id, sched->hour, sched->minute, sched->enabled);
+                nearestDayOffset = dayOffset;
+                nearestHour = schedHour;
+                nearestMinute = schedMinute;
+                DEBUG_PRINTF("formatNextFeedTime: Found schedule id=%d hour=%d min=%d type=%d\n",
+                              sched->id, schedHour, schedMinute, (int)sched->scheduleType);
             }
         }
     }
 
     // Only format if we actually found a schedule
-    if (nearestDay < 0) {
+    if (nearestDayOffset < 0) {
         return;  // Keep "None" default
     }
 
-    // Convert UTC hour to local time for display
-    int16_t tzOffset = storage.getSettings().timezoneOffset;
-    int localHour = nearestHour + (tzOffset / 60);
-
-    // Track if converting to local time pushed us to a different day
-    int dayAdjust = 0;
-    if (localHour < 0) {
-        localHour += 24;
-        dayAdjust = -1;  // Went back a day
-    } else if (localHour >= 24) {
-        localHour -= 24;
-        dayAdjust = 1;   // Went forward a day
-    }
-
-    // Use centralized 12-hour formatting
-    FormattedTime ft(localHour);
-
-    // Determine if this is "today" in local time
-    // Convert current UTC time to local to get the local day
-    int currentLocalHour = currentHour + (tzOffset / 60);
-    int currentDayAdjust = 0;
-    if (currentLocalHour < 0) {
-        currentDayAdjust = -1;
-    } else if (currentLocalHour >= 24) {
-        currentDayAdjust = 1;
-    }
-
-    // It's "today" only if both times are on the same local day
-    bool isToday = (nearestSeconds < 86400) && (dayAdjust == currentDayAdjust);
-
-    // Adjust nearestDay to local day for display
-    int localNearestDay = (nearestDay + dayAdjust + 7) % 7;
+    // Use centralized 12-hour formatting (already in local time)
+    FormattedTime ft(nearestHour);
 
     // Format as "Today H:MM AM" or "Mon H:MM PM"
-    if (isToday) {
+    if (nearestDayOffset == 0) {
         snprintf(buffer, len, "Today %d:%02d %s", ft.displayHour, nearestMinute, ft.ampm);
     } else {
-        snprintf(buffer, len, "%s %d:%02d %s", DAY_NAMES[localNearestDay], ft.displayHour, nearestMinute, ft.ampm);
+        int displayDay = (currentDay + nearestDayOffset) % 7;
+        snprintf(buffer, len, "%s %d:%02d %s", DAY_NAMES[displayDay], ft.displayHour, nearestMinute, ft.ampm);
     }
 }
