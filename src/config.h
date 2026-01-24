@@ -324,9 +324,8 @@ constexpr uint32_t WIFI_IDLE_TIMEOUT_MS = 5 * 60 * 1000;  // 5 minutes
 // BLE Settings
 // =============================================================================
 
-// BLE service and characteristic UUIDs
+// BLE service UUID
 constexpr char BLE_SERVICE_UUID[] = "f33d0001-1234-5678-9abc-def012345678";
-constexpr char BLE_WAKE_CHAR_UUID[] = "f33d0002-1234-5678-9abc-def012345678";
 
 // =============================================================================
 // Storage Keys (Preferences namespace)
