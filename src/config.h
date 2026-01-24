@@ -9,6 +9,25 @@
 constexpr char FEEDME_VERSION[] = "0.1b";
 
 // =============================================================================
+// Serial Debug Output
+// =============================================================================
+
+// IMPORTANT: Serial debug must be disabled because GPIO16 (D6) is used for the
+// button input, but GPIO16 is also U0TXD. Serial output conflicts with the button.
+// Set to 0 to disable, 1 to enable (only for debugging with different pin config)
+#define SERIAL_DEBUG 0
+
+#if SERIAL_DEBUG
+    #define DEBUG_PRINT(...) Serial.print(__VA_ARGS__)
+    #define DEBUG_PRINTLN(...) Serial.println(__VA_ARGS__)
+    #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+    #define DEBUG_PRINT(...) ((void)0)
+    #define DEBUG_PRINTLN(...) ((void)0)
+    #define DEBUG_PRINTF(...) ((void)0)
+#endif
+
+// =============================================================================
 // Hardware Target
 // =============================================================================
 
@@ -92,15 +111,15 @@ constexpr uint8_t PIN_RTC_SDA = 17;    // D7 - I2C Data
 constexpr uint8_t PIN_RTC_SCL = 19;    // D8 - I2C Clock
 
 // Buttons
-// BTN1 on D9, BTN2 on D10 (active when solder jumper JP1 in BTN2 position)
+// BTN1 on D6, BTN2 on D10 (active when solder jumper JP1 in BTN2 position)
 // When JP1 in EPD_BUSY position, single-button mode using BTN1 only
 #define SINGLE_BUTTON_MODE 1              // Set to 0 if JP1 connects D10 to BTN2
-constexpr uint8_t PIN_BUTTON = 20;         // D9 - BTN1 (directly wired to button)
-constexpr uint8_t PIN_BUTTON_PREV = 20;    // D9 - BTN1
+constexpr uint8_t PIN_BUTTON = 16;         // D6 - BTN1 (directly wired to button)
+constexpr uint8_t PIN_BUTTON_PREV = 16;    // D6 - BTN1
 constexpr uint8_t PIN_BUTTON_NEXT = 18;    // D10 - BTN2 (shared with EPD_BUSY via JP1)
 
 // Motor control (P-channel high-side via 2N7002 gate driver)
-constexpr uint8_t PIN_MOTOR_RELAY = 16;   // D6 - MOTOR_CTRL
+constexpr uint8_t PIN_MOTOR_RELAY = 20;   // D9 - MOTOR_CTRL
 
 // Battery sensing (voltage divider 100K/27K)
 constexpr uint8_t PIN_BATTERY_ADC = 1;    // D1 - BATT_SENSE (ADC capable)

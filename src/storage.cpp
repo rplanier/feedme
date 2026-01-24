@@ -2,6 +2,7 @@
 #include "sun_calc.h"
 #include "time_format.h"
 #include <time.h>
+#include <RTClib.h>  // For DateTime
 #include <mbedtls/sha256.h>
 #include <mbedtls/base64.h>
 
@@ -74,13 +75,13 @@ void Storage::serializeBleSchedule(const BleSchedule& s, JsonObject& obj) {
 bool Storage::begin() {
     // Initialize preferences
     if (!prefs.begin(PREF_NAMESPACE, false)) {
-        Serial.println("Storage: Failed to initialize preferences");
+        DEBUG_PRINTLN("Storage: Failed to initialize preferences");
         return false;
     }
 
     // Initialize LittleFS
     if (!LittleFS.begin(true)) {  // true = format if mount fails
-        Serial.println("Storage: Failed to mount LittleFS");
+        DEBUG_PRINTLN("Storage: Failed to mount LittleFS");
         return false;
     }
 
@@ -99,7 +100,7 @@ bool Storage::begin() {
     // Load feed history
     loadFeedHistory();
 
-    Serial.printf("Storage: Initialized, device ID: %s, %d schedules, %d BLE schedules, %d history entries\n",
+    DEBUG_PRINTF("Storage: Initialized, device ID: %s, %d schedules, %d BLE schedules, %d history entries\n",
                   deviceId, getScheduleCount(), getBleScheduleCount(), getFeedHistoryCount());
     return true;
 }
@@ -114,7 +115,7 @@ const char* Storage::getDeviceId() {
             // Generate new ID
             generateDeviceId();
             prefs.putString(PREF_DEVICE_ID, deviceId);
-            Serial.printf("Storage: Generated new device ID: %s\n", deviceId);
+            DEBUG_PRINTF("Storage: Generated new device ID: %s\n", deviceId);
         }
     }
     return deviceId;
@@ -133,10 +134,12 @@ void Storage::generateDeviceId() {
 
 void Storage::initDefaultSettings() {
     strncpy(settings.deviceId, deviceId, 5);
+    settings.deviceName[0] = '\0';  // Empty = use default "FeedMe-XXXX"
     settings.motorDuration = MOTOR_DEFAULT_DURATION_SEC;
     settings.vacationMode = false;
     settings.sleepTimeout = DEFAULT_SLEEP_TIMEOUT;
-    settings.timezoneOffset = 0;  // UTC
+    settings.timezoneOffset = 0;  // UTC (deprecated, use posixTz)
+    settings.posixTz[0] = '\0';   // Empty = use timezoneOffset fallback
     settings.batteryType = BatteryType::SLA;  // Default to SLA
     settings.antennaType = DEFAULT_ANTENNA_TYPE;  // Default to rod antenna
     settings.latitude = 0.0f;
@@ -148,13 +151,24 @@ void Storage::loadSettings() {
     settings.motorDuration = prefs.getUChar(PREF_MOTOR_DURATION, MOTOR_DEFAULT_DURATION_SEC);
     settings.vacationMode = prefs.getBool(PREF_VACATION_MODE, false);
     settings.sleepTimeout = static_cast<SleepTimeout>(prefs.getUChar("sleepTmout", static_cast<uint8_t>(DEFAULT_SLEEP_TIMEOUT)));
-    settings.timezoneOffset = prefs.getShort("tzOffset", 0);  // Default to UTC
+    settings.timezoneOffset = prefs.getShort("tzOffset", 0);  // Default to UTC (deprecated)
     settings.batteryType = static_cast<BatteryType>(prefs.getUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(BatteryType::SLA)));
     settings.antennaType = static_cast<AntennaType>(prefs.getUChar(PREF_ANTENNA_TYPE, static_cast<uint8_t>(DEFAULT_ANTENNA_TYPE)));
     settings.latitude = prefs.getFloat(PREF_LATITUDE, 0.0f);
     settings.longitude = prefs.getFloat(PREF_LONGITUDE, 0.0f);
     settings.locationSet = prefs.getBool(PREF_LOCATION_SET, false);
     strncpy(settings.deviceId, deviceId, 5);
+
+    // Load device name (empty string = use default "FeedMe-XXXX")
+    size_t nameLen = prefs.getString("deviceName", settings.deviceName, sizeof(settings.deviceName));
+    if (nameLen == 0) {
+        settings.deviceName[0] = '\0';
+    }
+
+    // Load POSIX timezone string (empty = use timezoneOffset fallback)
+    // Ensure null termination even if NVS contains garbage
+    memset(settings.posixTz, 0, sizeof(settings.posixTz));
+    prefs.getString("posixTz", settings.posixTz, sizeof(settings.posixTz) - 1);
 }
 
 void Storage::saveSettings() {
@@ -162,12 +176,62 @@ void Storage::saveSettings() {
     prefs.putBool(PREF_VACATION_MODE, settings.vacationMode);
     prefs.putUChar("sleepTmout", static_cast<uint8_t>(settings.sleepTimeout));
     prefs.putShort("tzOffset", settings.timezoneOffset);
+    prefs.putString("posixTz", settings.posixTz);
     prefs.putUChar(PREF_BATTERY_TYPE, static_cast<uint8_t>(settings.batteryType));
     prefs.putUChar(PREF_ANTENNA_TYPE, static_cast<uint8_t>(settings.antennaType));
     prefs.putFloat(PREF_LATITUDE, settings.latitude);
     prefs.putFloat(PREF_LONGITUDE, settings.longitude);
     prefs.putBool(PREF_LOCATION_SET, settings.locationSet);
-    Serial.println("Storage: Settings saved");
+    prefs.putString("deviceName", settings.deviceName);
+    DEBUG_PRINTLN("Storage: Settings saved");
+}
+
+void Storage::applyTimezone() {
+    // Apply POSIX timezone string to system so localtime() handles DST automatically
+    // If posixTz is empty or invalid, fall back to simple UTC offset (no DST)
+
+    // Validate posixTz - must be non-empty, printable ASCII, reasonable length
+    bool validPosixTz = false;
+    if (settings.posixTz[0] != '\0') {
+        validPosixTz = true;
+        for (int i = 0; i < (int)sizeof(settings.posixTz) && settings.posixTz[i] != '\0'; i++) {
+            char c = settings.posixTz[i];
+            // Valid POSIX TZ chars: alphanumeric, +, -, :, /, comma
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '+' || c == '-' ||
+                  c == ':' || c == '/' || c == ',' || c == '.')) {
+                validPosixTz = false;
+                DEBUG_PRINTF("Storage: Invalid char in posixTz at pos %d: 0x%02X\n", i, (unsigned char)c);
+                break;
+            }
+        }
+    }
+
+    if (validPosixTz) {
+        setenv("TZ", settings.posixTz, 1);
+        tzset();
+        DEBUG_PRINTF("Storage: Applied POSIX timezone: %s\n", settings.posixTz);
+    } else if (settings.timezoneOffset != 0) {
+        // Fallback: create simple UTC offset string (no DST support)
+        // Format: "UTC+HH:MM" or "UTC-HH:MM" (note: POSIX uses inverted sign)
+        int offsetMinutes = -settings.timezoneOffset;  // Invert for POSIX convention
+        int hours = abs(offsetMinutes) / 60;
+        int mins = abs(offsetMinutes) % 60;
+        char tzStr[16];
+        if (mins == 0) {
+            snprintf(tzStr, sizeof(tzStr), "UTC%+d", offsetMinutes >= 0 ? hours : -hours);
+        } else {
+            snprintf(tzStr, sizeof(tzStr), "UTC%+d:%02d", offsetMinutes >= 0 ? hours : -hours, mins);
+        }
+        setenv("TZ", tzStr, 1);
+        tzset();
+        DEBUG_PRINTF("Storage: Applied fallback timezone: %s (offset %d min)\n", tzStr, settings.timezoneOffset);
+    } else {
+        // Default to UTC
+        setenv("TZ", "UTC0", 1);
+        tzset();
+        DEBUG_PRINTLN("Storage: Applied UTC timezone");
+    }
 }
 
 // =============================================================================
@@ -176,7 +240,7 @@ void Storage::saveSettings() {
 
 void Storage::loadSchedules() {
     feedSchedules.load(SCHEDULES_FILE, "schedules", deserializeFeedSchedule);
-    Serial.printf("Storage: Loaded %d feed schedules\n", feedSchedules.getCount());
+    DEBUG_PRINTF("Storage: Loaded %d feed schedules\n", feedSchedules.getCount());
 }
 
 void Storage::saveSchedules() {
@@ -262,13 +326,13 @@ bool Storage::setSchedulesFromJson(const String& json) {
     DeserializationError error = deserializeJson(doc, json);
 
     if (error) {
-        Serial.printf("Storage: Failed to parse JSON: %s\n", error.c_str());
+        DEBUG_PRINTF("Storage: Failed to parse JSON: %s\n", error.c_str());
         return false;
     }
 
     JsonArray arr = doc.as<JsonArray>();
     if (!arr) {
-        Serial.println("Storage: JSON is not an array");
+        DEBUG_PRINTLN("Storage: JSON is not an array");
         return false;
     }
 
@@ -357,20 +421,25 @@ void Schedule::generateName(int16_t tzOffset) {
 bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
     if (getScheduleCount() == 0) return false;
 
-    // Get current time
-    struct tm timeinfo;
-    time_t now = time(nullptr);
-    localtime_r(&now, &timeinfo);
-
-    int currentDay = timeinfo.tm_wday;  // 0 = Sunday
-    int currentHour = timeinfo.tm_hour;
-    int currentMin = timeinfo.tm_min;
-    int currentMonth = timeinfo.tm_mon + 1;
-    int currentDayOfMonth = timeinfo.tm_mday;
-    int currentYear = timeinfo.tm_year + 1900;
-
     Settings& settings = getSettings();
     int16_t tzOffset = settings.timezoneOffset;
+
+    // Get current UTC time and convert to local time using system timezone
+    // This handles DST automatically since applyTimezone() was called
+    time_t utcNow = time(nullptr);
+    struct tm localTm;
+    localtime_r(&utcNow, &localTm);
+
+    int currentDay = localTm.tm_wday;  // 0 = Sunday
+    int currentHour = localTm.tm_hour;
+    int currentMin = localTm.tm_min;
+    int currentMonth = localTm.tm_mon + 1;
+    int currentDayOfMonth = localTm.tm_mday;
+    int currentYear = localTm.tm_year + 1900;
+
+    // Create DateTime for sunrise/sunset calculations
+    time_t localTime = mktime(&localTm);
+    DateTime localNow = DateTime((uint32_t)localTime);
 
     int bestDaysAway = 8;  // More than a week = not found
     int bestHour = -1;
@@ -396,23 +465,21 @@ bool Storage::getNextRunTime(int& hour, int& minute, int& daysAway) {
                 schedMinute = s->minute;
             } else if (settings.locationSet) {
                 // Calculate sunrise/sunset for the target day
-                // For days in the future, adjust the date
-                struct tm futureTime = timeinfo;
-                futureTime.tm_mday += d;
-                mktime(&futureTime);  // Normalize the date
+                // For days in the future, add days to current local time
+                DateTime futureDate = DateTime(localNow.unixtime() + (d * 86400));
 
                 int sunMinutes;
                 if (s->scheduleType == ScheduleType::SUNRISE) {
-                    sunMinutes = SunCalc::getSunrise(futureTime.tm_year + 1900,
-                                                      futureTime.tm_mon + 1,
-                                                      futureTime.tm_mday,
+                    sunMinutes = SunCalc::getSunrise(futureDate.year(),
+                                                      futureDate.month(),
+                                                      futureDate.day(),
                                                       settings.latitude,
                                                       settings.longitude,
                                                       tzOffset);
                 } else {  // SUNSET
-                    sunMinutes = SunCalc::getSunset(futureTime.tm_year + 1900,
-                                                     futureTime.tm_mon + 1,
-                                                     futureTime.tm_mday,
+                    sunMinutes = SunCalc::getSunset(futureDate.year(),
+                                                     futureDate.month(),
+                                                     futureDate.day(),
                                                      settings.latitude,
                                                      settings.longitude,
                                                      tzOffset);
@@ -589,7 +656,7 @@ bool Storage::shouldBleBeActive() {
 // =============================================================================
 
 void Storage::resetToDefaults() {
-    Serial.println("Storage: Resetting to defaults");
+    DEBUG_PRINTLN("Storage: Resetting to defaults");
 
     // Clear all schedules
     feedSchedules.clear();
@@ -608,7 +675,7 @@ void Storage::resetToDefaults() {
     initDefaultSettings();
     saveSettings();
 
-    Serial.println("Storage: Reset complete");
+    DEBUG_PRINTLN("Storage: Reset complete");
 }
 
 // =============================================================================
@@ -618,7 +685,7 @@ void Storage::resetToDefaults() {
 void Storage::loadFeedHistory() {
     File file = LittleFS.open(FEED_HISTORY_FILE, "r");
     if (!file) {
-        Serial.println("Storage: No feed history file found");
+        DEBUG_PRINTLN("Storage: No feed history file found");
         feedHistoryCount = 0;
         feedHistoryHead = 0;
         return;
@@ -629,7 +696,7 @@ void Storage::loadFeedHistory() {
     file.close();
 
     if (error) {
-        Serial.printf("Storage: Failed to parse feed history: %s\n", error.c_str());
+        DEBUG_PRINTF("Storage: Failed to parse feed history: %s\n", error.c_str());
         feedHistoryCount = 0;
         feedHistoryHead = 0;
         return;
@@ -662,18 +729,19 @@ void Storage::loadFeedHistory() {
         event.timestamp = obj["timestamp"] | 0;
         event.duration = obj["duration"] | 0;
         event.manual = obj["manual"] | false;
+        event.status = static_cast<FeedStatus>(obj["status"] | 0);  // Default to EXECUTED
         strlcpy(event.scheduleName, obj["scheduleName"] | "", sizeof(event.scheduleName));
 
         loadIndex--;
     }
 
-    Serial.printf("Storage: Loaded %d feed history entries\n", feedHistoryCount);
+    DEBUG_PRINTF("Storage: Loaded %d feed history entries\n", feedHistoryCount);
 }
 
 void Storage::saveFeedHistory() {
     File file = LittleFS.open(FEED_HISTORY_FILE, "w");
     if (!file) {
-        Serial.println("Storage: Failed to open feed history file for writing");
+        DEBUG_PRINTLN("Storage: Failed to open feed history file for writing");
         return;
     }
 
@@ -690,15 +758,16 @@ void Storage::saveFeedHistory() {
         obj["duration"] = event->duration;
         obj["manual"] = event->manual;
         obj["scheduleName"] = event->scheduleName;
+        obj["status"] = static_cast<uint8_t>(event->status);
     }
 
     serializeJson(doc, file);
     file.close();
 
-    Serial.printf("Storage: Saved %d feed history entries\n", feedHistoryCount);
+    DEBUG_PRINTF("Storage: Saved %d feed history entries\n", feedHistoryCount);
 }
 
-void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleName) {
+void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleName, FeedStatus status) {
     // Get current Unix timestamp
     time_t now = time(nullptr);
 
@@ -711,6 +780,7 @@ void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleNa
     event.timestamp = (uint32_t)now;
     event.duration = duration;
     event.manual = manual;
+    event.status = status;
     if (scheduleName && scheduleName[0] != '\0') {
         strlcpy(event.scheduleName, scheduleName, sizeof(event.scheduleName));
     } else {
@@ -721,8 +791,13 @@ void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleNa
         feedHistoryCount++;
     }
 
-    Serial.printf("Storage: Logged feed event (duration=%ds, manual=%s, schedule=%s)\n",
-                  duration, manual ? "yes" : "no", scheduleName ? scheduleName : "");
+    const char* statusStr = "executed";
+    if (status == FeedStatus::SKIPPED_BATTERY) statusStr = "skipped (low battery)";
+    else if (status == FeedStatus::SKIPPED_RUNNING) statusStr = "skipped (motor running)";
+    else if (status == FeedStatus::SKIPPED_RECENT) statusStr = "skipped (recent feed)";
+
+    DEBUG_PRINTF("Storage: Logged feed event (duration=%ds, manual=%s, schedule=%s, status=%s)\n",
+                  duration, manual ? "yes" : "no", scheduleName ? scheduleName : "", statusStr);
 
     saveFeedHistory();
 }
@@ -750,6 +825,7 @@ String Storage::getFeedHistoryJson() {
         obj["duration"] = event->duration;
         obj["manual"] = event->manual;
         obj["scheduleName"] = event->scheduleName;
+        obj["status"] = static_cast<uint8_t>(event->status);
     }
 
     String result;
@@ -780,7 +856,7 @@ bool Storage::setPin(const char* pin) {
     // Validate PIN length
     size_t len = strlen(pin);
     if (len < PIN_MIN_LENGTH || len > PIN_MAX_LENGTH) {
-        Serial.printf("Storage: Invalid PIN length %d (must be %d-%d)\n",
+        DEBUG_PRINTF("Storage: Invalid PIN length %d (must be %d-%d)\n",
                       len, PIN_MIN_LENGTH, PIN_MAX_LENGTH);
         return false;
     }
@@ -788,7 +864,7 @@ bool Storage::setPin(const char* pin) {
     // Validate all digits
     for (size_t i = 0; i < len; i++) {
         if (!isdigit(pin[i])) {
-            Serial.println("Storage: PIN must contain only digits");
+            DEBUG_PRINTLN("Storage: PIN must contain only digits");
             return false;
         }
     }
@@ -807,7 +883,7 @@ bool Storage::setPin(const char* pin) {
     prefs.putBool(PREF_PIN_SET, true);
     resetFailedPinAttempts();
 
-    Serial.println("Storage: PIN set successfully");
+    DEBUG_PRINTLN("Storage: PIN set successfully");
     return true;
 }
 
@@ -820,7 +896,7 @@ bool Storage::verifyPin(const char* pin) {
     // Check lockout
     uint32_t lockoutEnd = getLockoutEndTime();
     if (lockoutEnd > 0 && millis() < lockoutEnd) {
-        Serial.println("Storage: PIN verification blocked - device locked out");
+        DEBUG_PRINTLN("Storage: PIN verification blocked - device locked out");
         return false;
     }
 
@@ -838,13 +914,13 @@ bool Storage::verifyPin(const char* pin) {
     String storedHash = prefs.getString(PREF_PIN_HASH, "");
     if (storedHash == hashStr) {
         resetFailedPinAttempts();
-        Serial.println("Storage: PIN verified successfully");
+        DEBUG_PRINTLN("Storage: PIN verified successfully");
         return true;
     }
 
     // Wrong PIN - increment failed attempts
     incrementFailedPinAttempts();
-    Serial.printf("Storage: Wrong PIN (%d failed attempts)\n", getFailedPinAttempts());
+    DEBUG_PRINTF("Storage: Wrong PIN (%d failed attempts)\n", getFailedPinAttempts());
     return false;
 }
 
@@ -852,7 +928,7 @@ void Storage::clearPin() {
     prefs.remove(PREF_PIN_HASH);
     prefs.putBool(PREF_PIN_SET, false);
     resetFailedPinAttempts();
-    Serial.println("Storage: PIN cleared");
+    DEBUG_PRINTLN("Storage: PIN cleared");
 }
 
 uint8_t Storage::getFailedPinAttempts() {
@@ -881,7 +957,7 @@ uint32_t Storage::getLockoutEndTime() {
 void Storage::setLockout(uint32_t durationMs) {
     uint32_t endTime = millis() + durationMs;
     prefs.putULong(PREF_PIN_LOCKOUT, endTime);
-    Serial.printf("Storage: Device locked out for %d seconds\n", durationMs / 1000);
+    DEBUG_PRINTF("Storage: Device locked out for %d seconds\n", durationMs / 1000);
 }
 
 // =============================================================================
@@ -912,7 +988,7 @@ bool Storage::addPairedDevice(const char* bleAddress) {
 
     // Check if already paired
     if (isPairedDevice(bleAddress)) {
-        Serial.printf("Storage: Device %s already paired\n", bleAddress);
+        DEBUG_PRINTF("Storage: Device %s already paired\n", bleAddress);
         return true;
     }
 
@@ -921,7 +997,7 @@ bool Storage::addPairedDevice(const char* bleAddress) {
     // Check limit
     if (count >= MAX_PAIRED_DEVICES) {
         // Remove oldest device to make room
-        Serial.println("Storage: Paired device limit reached, removing oldest");
+        DEBUG_PRINTLN("Storage: Paired device limit reached, removing oldest");
         for (int i = 0; i < count - 1; i++) {
             char keyOld[12], keyNew[12];
             snprintf(keyOld, sizeof(keyOld), "%s%d", PREF_PAIRED_PREFIX, i + 1);
@@ -938,7 +1014,7 @@ bool Storage::addPairedDevice(const char* bleAddress) {
     prefs.putString(key, bleAddress);
     prefs.putUChar(PREF_PAIRED_COUNT, count + 1);
 
-    Serial.printf("Storage: Paired device added: %s (total: %d)\n", bleAddress, count + 1);
+    DEBUG_PRINTF("Storage: Paired device added: %s (total: %d)\n", bleAddress, count + 1);
     return true;
 }
 
@@ -980,7 +1056,7 @@ bool Storage::removePairedDevice(const char* bleAddress) {
     prefs.remove(lastKey);
     prefs.putUChar(PREF_PAIRED_COUNT, count - 1);
 
-    Serial.printf("Storage: Paired device removed: %s\n", bleAddress);
+    DEBUG_PRINTF("Storage: Paired device removed: %s\n", bleAddress);
     return true;
 }
 
@@ -992,7 +1068,7 @@ void Storage::clearAllPairedDevices() {
         prefs.remove(key);
     }
     prefs.putUChar(PREF_PAIRED_COUNT, 0);
-    Serial.println("Storage: All paired devices cleared");
+    DEBUG_PRINTLN("Storage: All paired devices cleared");
 }
 
 int Storage::getPairedDeviceCount() {

@@ -133,6 +133,8 @@ private:
         while (localTime < 0) localTime += 1440.0f;
         while (localTime >= 1440) localTime -= 1440.0f;
 
-        return (int)round(localTime);
+        // Use floor() for more conservative timing (sunrise slightly later, sunset slightly earlier)
+        // This ensures feeds happen before sunset rather than after
+        return (int)floor(localTime);
     }
 };

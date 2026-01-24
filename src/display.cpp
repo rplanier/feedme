@@ -3,6 +3,8 @@
 #include "rtc_manager.h"
 #include "buttons.h"
 #include "icons.h"
+#include "sun_calc.h"
+#include "time_format.h"
 #include <qrcode.h>
 
 Display display;
@@ -54,7 +56,7 @@ void Display::begin() {
 
     delay(1000);
 
-    Serial.println("Display: E-paper initialized");
+    DEBUG_PRINTLN("Display: E-paper initialized");
     needsRedraw = true;
     // Force full refresh for first screen draw (partial refresh doesn't work on this display)
     partialRefreshCount = PARTIAL_REFRESH_LIMIT;
@@ -417,6 +419,11 @@ void Display::drawFeedSchedulesScreen() {
         return;
     }
 
+    // Get current date for sunrise/sunset calculations
+    Settings& settings = storage.getSettings();
+    int16_t tzOffset = settings.timezoneOffset;
+    DateTime now = rtcManager.now();
+
     // Display schedules (4 visible at a time with compact layout)
     int visibleCount = min(4, scheduleCount - scrollOffset);
     int y = 42;  // Start below 24px header + margin
@@ -430,10 +437,11 @@ void Display::drawFeedSchedulesScreen() {
         if (sched) {
             Schedule& schedule = *sched;
 
-            // Format: "07:00 Daily    5s ON"  or "07:00 S-T-T-- 10s OFF"
             char line[32];
             char daysStr[8];
+            char timeStr[8];
 
+            // Format days string
             if (schedule.days == DAYS_ALL) {
                 strcpy(daysStr, "Daily ");
             } else {
@@ -444,12 +452,55 @@ void Display::drawFeedSchedulesScreen() {
                 daysStr[7] = '\0';
             }
 
-            int dur = (schedule.duration > 0) ? schedule.duration : storage.getSettings().motorDuration;
-            // Convert UTC hour to local for display
-            uint8_t localHour = schedule.getLocalHour(storage.getSettings().timezoneOffset);
-            snprintf(line, sizeof(line), "%02d:%02d %s %2ds %s",
-                     localHour, schedule.minute,
-                     daysStr, dur,
+            // Calculate display time based on schedule type
+            if (schedule.scheduleType == ScheduleType::SPECIFIC_TIME) {
+                // Convert stored local time for display
+                snprintf(timeStr, sizeof(timeStr), "%02d:%02d", schedule.hour, schedule.minute);
+            } else if (settings.locationSet) {
+                // Calculate sunrise/sunset time
+                int sunMinutes;
+                if (schedule.scheduleType == ScheduleType::SUNRISE) {
+                    sunMinutes = SunCalc::getSunrise(now.year(), now.month(), now.day(),
+                                                      settings.latitude, settings.longitude, tzOffset);
+                } else {  // SUNSET
+                    sunMinutes = SunCalc::getSunset(now.year(), now.month(), now.day(),
+                                                     settings.latitude, settings.longitude, tzOffset);
+                }
+
+                if (sunMinutes >= 0) {
+                    // Apply offset
+                    sunMinutes += schedule.sunOffset;
+                    while (sunMinutes < 0) sunMinutes += 1440;
+                    while (sunMinutes >= 1440) sunMinutes -= 1440;
+
+                    int hour = sunMinutes / 60;
+                    int minute = sunMinutes % 60;
+                    // Show with sun indicator (*) to indicate calculated time
+                    snprintf(timeStr, sizeof(timeStr), "*%02d:%02d", hour, minute);
+                } else {
+                    // Sun doesn't rise/set at this location
+                    strcpy(timeStr, "--:--");
+                }
+            } else {
+                // Location not set, show schedule type indicator
+                if (schedule.scheduleType == ScheduleType::SUNRISE) {
+                    if (schedule.sunOffset != 0) {
+                        snprintf(timeStr, sizeof(timeStr), "SR%+d", schedule.sunOffset);
+                    } else {
+                        strcpy(timeStr, "SR   ");
+                    }
+                } else {
+                    if (schedule.sunOffset != 0) {
+                        snprintf(timeStr, sizeof(timeStr), "SS%+d", schedule.sunOffset);
+                    } else {
+                        strcpy(timeStr, "SS   ");
+                    }
+                }
+            }
+
+            int dur = (schedule.duration > 0) ? schedule.duration : settings.motorDuration;
+            snprintf(line, sizeof(line), "%-6s %s %2ds %s",
+                     timeStr, daysStr, dur,
                      schedule.enabled ? "ON" : "--");
 
             epd.setCursor(5, y);
@@ -911,13 +962,13 @@ void Display::showPairingPin(const char* pin) {
 
     } while (epd.nextPage());
 
-    Serial.printf("Display: Showing pairing PIN: %s\n", pin);
+    DEBUG_PRINTF("Display: Showing pairing PIN: %s\n", pin);
 }
 
 void Display::hidePairingPin() {
     // Return to normal display by forcing a full refresh of the current screen
     forceFullRefresh();
-    Serial.println("Display: Hiding pairing PIN, returning to normal display");
+    DEBUG_PRINTLN("Display: Hiding pairing PIN, returning to normal display");
 }
 
 // =============================================================================

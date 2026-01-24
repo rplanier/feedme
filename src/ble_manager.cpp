@@ -23,7 +23,7 @@ void ServerCallbacks::onConnect(BLEServer* pServer) {
     manager->resetSession();  // Fresh session on each connection
 
     uint16_t connId = pServer->getConnId();
-    Serial.printf("BLE: Client connected (conn_id: %d)\n", connId);
+    DEBUG_PRINTF("BLE: Client connected (conn_id: %d)\n", connId);
 
     // Request Coded PHY (S=8) for this connection - maximum range (~300m)
     // BLE_GAP_LE_PHY_CODED_S8 = 2 specifies S=8 coding (125 kbps, longest range)
@@ -34,16 +34,16 @@ void ServerCallbacks::onConnect(BLEServer* pServer) {
         BLE_GAP_LE_PHY_CODED_S8      // S=8 coding for maximum range
     );
     if (phyResult == 0) {
-        Serial.println("BLE: Requested Coded PHY (S=8) for long range");
+        DEBUG_PRINTLN("BLE: Requested Coded PHY (S=8) for long range");
     } else {
-        Serial.printf("BLE: PHY update request returned: %d\n", phyResult);
+        DEBUG_PRINTF("BLE: PHY update request returned: %d\n", phyResult);
     }
 }
 
 void ServerCallbacks::onDisconnect(BLEServer* pServer) {
     manager->clientConnected = false;
     manager->resetSession();  // Clear auth on disconnect
-    Serial.println("BLE: Client disconnected");
+    DEBUG_PRINTLN("BLE: Client disconnected");
 
     // Restart advertising after disconnect (if BLE should still be active)
     if (manager->isRunning()) {
@@ -69,7 +69,7 @@ void DeviceInfoCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     serializeJson(doc, json);
     pCharacteristic->setValue(json.c_str());
 
-    Serial.printf("BLE: DeviceInfo read: %s\n", json.c_str());
+    DEBUG_PRINTF("BLE: DeviceInfo read: %s\n", json.c_str());
 }
 
 // =============================================================================
@@ -89,7 +89,7 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, value);
     if (error) {
-        Serial.printf("BLE: Auth JSON parse error: %s\n", error.c_str());
+        DEBUG_PRINTF("BLE: Auth JSON parse error: %s\n", error.c_str());
         manager->notifyAuth(false, PIN_MAX_ATTEMPTS - storage.getFailedPinAttempts());
         return;
     }
@@ -108,7 +108,7 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (lockoutEnd > 0 && millis() < lockoutEnd) {
         uint32_t remaining = (lockoutEnd - millis()) / 1000;
         manager->notifyAuth(false, 0, remaining);
-        Serial.printf("BLE: Auth blocked - locked out for %d seconds\n", remaining);
+        DEBUG_PRINTF("BLE: Auth blocked - locked out for %d seconds\n", remaining);
         return;
     }
 
@@ -121,7 +121,7 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         manager->updateCharacteristicValues();  // Pre-populate data for reads
         manager->notifyAuth(true);
         manager->clearPairingDisplay();
-        Serial.printf("BLE: Auth success (paired device: %s)\n", manager->getSession().clientAddress);
+        DEBUG_PRINTF("BLE: Auth success (paired device: %s)\n", manager->getSession().clientAddress);
         return;
     }
 
@@ -131,7 +131,7 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         manager->generatePairingPin();
         // Notify with special response indicating PIN is displayed on device
         manager->notifyAuth(false, PIN_MAX_ATTEMPTS, 0);
-        Serial.printf("BLE: Pairing PIN generated and displayed: %s\n", manager->getSession().generatedPin);
+        DEBUG_PRINTF("BLE: Pairing PIN generated and displayed: %s\n", manager->getSession().generatedPin);
         return;
     }
 
@@ -157,7 +157,7 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         manager->updateCharacteristicValues();  // Pre-populate data for reads
         manager->clearPairingDisplay();
         manager->notifyAuth(true);
-        Serial.println("BLE: Auth success (new device paired)");
+        DEBUG_PRINTLN("BLE: Auth success (new device paired)");
     } else {
         // Wrong PIN
         storage.incrementFailedPinAttempts();
@@ -175,7 +175,7 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         }
 
         manager->notifyAuth(false, remaining, lockoutSec);
-        Serial.printf("BLE: Auth failed (wrong PIN), %d attempts remaining\n", remaining);
+        DEBUG_PRINTF("BLE: Auth failed (wrong PIN), %d attempts remaining\n", remaining);
     }
 }
 
@@ -188,7 +188,7 @@ void StatusCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     // Check auth
     if (storage.isPinSet() && !manager->getSession().authenticated) {
         pCharacteristic->setValue("{\"error\":\"unauthorized\"}");
-        Serial.println("BLE: Status read denied - not authenticated");
+        DEBUG_PRINTLN("BLE: Status read denied - not authenticated");
         return;
     }
 
@@ -226,7 +226,7 @@ void StatusCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     serializeJson(doc, json);
     pCharacteristic->setValue(json.c_str());
 
-    Serial.printf("BLE: Status read: %s\n", json.c_str());
+    DEBUG_PRINTF("BLE: Status read: %s\n", json.c_str());
 }
 
 // =============================================================================
@@ -242,6 +242,7 @@ void SettingsCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
     Settings& settings = storage.getSettings();
     JsonDocument doc;
+    doc["deviceName"] = settings.deviceName;
     doc["motorDuration"] = settings.motorDuration;
     doc["vacationMode"] = settings.vacationMode;
     doc["batteryType"] = static_cast<uint8_t>(settings.batteryType);
@@ -253,7 +254,7 @@ void SettingsCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     String json;
     serializeJson(doc, json);
 
-    Serial.printf("BLE: Settings read request: %s\n", json.c_str());
+    DEBUG_PRINTF("BLE: Settings read request: %s\n", json.c_str());
 
     // Send via chunked notifications (for consistency, even though settings are small)
     manager->sendChunkedData(pCharacteristic, json);
@@ -261,7 +262,7 @@ void SettingsCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
 void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: Settings write denied - not authenticated");
+        DEBUG_PRINTLN("BLE: Settings write denied - not authenticated");
         return;
     }
 
@@ -278,12 +279,22 @@ void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, assembledData);
     if (error) {
-        Serial.printf("BLE: Settings JSON parse error: %s\n", error.c_str());
+        DEBUG_PRINTF("BLE: Settings JSON parse error: %s\n", error.c_str());
         return;
     }
 
     Settings& settings = storage.getSettings();
     bool changed = false;
+
+    if (doc["deviceName"].is<const char*>()) {
+        const char* name = doc["deviceName"];
+        if (strlen(name) < sizeof(settings.deviceName)) {
+            strncpy(settings.deviceName, name, sizeof(settings.deviceName) - 1);
+            settings.deviceName[sizeof(settings.deviceName) - 1] = '\0';
+            changed = true;
+            DEBUG_PRINTF("BLE: Device name set to '%s'\n", settings.deviceName);
+        }
+    }
 
     if (doc["motorDuration"].is<int>()) {
         uint8_t dur = doc["motorDuration"];
@@ -325,7 +336,7 @@ void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 
     if (changed) {
         storage.saveSettings();
-        Serial.println("BLE: Settings updated");
+        DEBUG_PRINTLN("BLE: Settings updated");
     }
 }
 
@@ -367,7 +378,7 @@ void FeedSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     String json;
     serializeJson(doc, json);
 
-    Serial.printf("BLE: Feed Schedules read request (%d bytes)\n", json.length());
+    DEBUG_PRINTF("BLE: Feed Schedules read request (%d bytes)\n", json.length());
 
     // Send via chunked notifications (handles large payloads)
     manager->sendChunkedData(pCharacteristic, json);
@@ -375,7 +386,7 @@ void FeedSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
 void FeedSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: Feed Schedules write denied - not authenticated");
+        DEBUG_PRINTLN("BLE: Feed Schedules write denied - not authenticated");
         return;
     }
 
@@ -390,10 +401,10 @@ void FeedSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     }
 
     if (storage.setSchedulesFromJson(assembledData)) {
-        Serial.println("BLE: Feed Schedules updated");
+        DEBUG_PRINTLN("BLE: Feed Schedules updated");
         manager->updateCharacteristicValues();  // Refresh cached values
     } else {
-        Serial.println("BLE: Failed to parse feed schedules JSON");
+        DEBUG_PRINTLN("BLE: Failed to parse feed schedules JSON");
     }
 }
 
@@ -403,15 +414,15 @@ void FeedSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 // =============================================================================
 
 void FeedCmdCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
-    Serial.println("BLE: Feed command received");
+    DEBUG_PRINTLN("BLE: Feed command received");
 
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: Feed command denied - not authenticated");
+        DEBUG_PRINTLN("BLE: Feed command denied - not authenticated");
         return;
     }
 
     String value = pCharacteristic->getValue();
-    Serial.printf("BLE: Feed command value: %s (len=%d)\n", value.c_str(), value.length());
+    DEBUG_PRINTF("BLE: Feed command value: %s (len=%d)\n", value.c_str(), value.length());
     uint8_t duration = 0;
 
     if (value.length() > 0) {
@@ -439,14 +450,14 @@ void FeedCmdCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 
     // Check if motor already running
     if (motor.isRunning()) {
-        Serial.println("BLE: Feed command denied - motor already running");
+        DEBUG_PRINTLN("BLE: Feed command denied - motor already running");
         return;
     }
 
     // Start feed
     motor.startThrow(duration);
     storage.logFeedEvent(duration, true, "BLE");
-    Serial.printf("BLE: Feed started for %d seconds\n", duration);
+    DEBUG_PRINTF("BLE: Feed started for %d seconds\n", duration);
 }
 
 // =============================================================================
@@ -462,7 +473,7 @@ void HistoryCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
     String json = storage.getFeedHistoryJson();
 
-    Serial.printf("BLE: History read request (%d bytes)\n", json.length());
+    DEBUG_PRINTF("BLE: History read request (%d bytes)\n", json.length());
 
     // Send via chunked notifications (handles large payloads)
     manager->sendChunkedData(pCharacteristic, json);
@@ -470,13 +481,15 @@ void HistoryCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
 // =============================================================================
 // Time Sync Characteristic (Write - requires auth)
-// JSON: { "epoch": 1705936200, "tzOffset": -360 }
-// tzOffset: minutes from UTC (negative = west of UTC, like Swift's secondsFromGMT)
+// JSON: { "epoch": 1705936200, "tzOffset": -360, "posixTz": "CST6CDT,M3.2.0,M11.1.0" }
+// epoch: Unix timestamp (UTC)
+// tzOffset: minutes from UTC (deprecated, for backwards compatibility)
+// posixTz: POSIX timezone string for automatic DST handling
 // =============================================================================
 
 void TimeSyncCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: Time sync denied - not authenticated");
+        DEBUG_PRINTLN("BLE: Time sync denied - not authenticated");
         return;
     }
 
@@ -486,23 +499,33 @@ void TimeSyncCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, value);
     if (error) {
-        Serial.printf("BLE: Time sync JSON parse error: %s\n", error.c_str());
+        DEBUG_PRINTF("BLE: Time sync JSON parse error: %s\n", error.c_str());
         return;
     }
 
     uint32_t epoch = doc["epoch"] | 0;
     int16_t tzOffset = doc["tzOffset"] | 0;
+    const char* posixTz = doc["posixTz"] | "";
 
     if (epoch > 0) {
         rtcManager.setTime(epoch);
         rtcManager.setTimeSynced(true);
 
-        // Store timezone offset
+        // Store timezone info
         Settings& settings = storage.getSettings();
-        settings.timezoneOffset = tzOffset;
-        storage.saveSettings();
+        settings.timezoneOffset = tzOffset;  // Keep for backwards compatibility
 
-        Serial.printf("BLE: Time synced to %u (tz offset: %d)\n", epoch, tzOffset);
+        // Store POSIX TZ string if provided
+        if (posixTz[0] != '\0') {
+            strncpy(settings.posixTz, posixTz, sizeof(settings.posixTz) - 1);
+            settings.posixTz[sizeof(settings.posixTz) - 1] = '\0';
+            DEBUG_PRINTF("BLE: Time synced with POSIX TZ: %s\n", settings.posixTz);
+        }
+
+        storage.saveSettings();
+        storage.applyTimezone();  // Apply timezone to system
+
+        DEBUG_PRINTF("BLE: Time synced to %u (tz offset: %d)\n", epoch, tzOffset);
     }
 }
 
@@ -513,7 +536,7 @@ void TimeSyncCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 
 void WifiOtaCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: WiFi OTA denied - not authenticated");
+        DEBUG_PRINTLN("BLE: WiFi OTA denied - not authenticated");
         return;
     }
 
@@ -523,7 +546,7 @@ void WifiOtaCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     uint8_t cmd = (uint8_t)value.charAt(0);
     if (cmd == 1) {
         manager->wifiOtaRequested.store(true);
-        Serial.println("BLE: WiFi OTA requested");
+        DEBUG_PRINTLN("BLE: WiFi OTA requested");
     }
 }
 
@@ -535,7 +558,7 @@ void WifiOtaCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 void SetPinCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     // If PIN is already set, must be authenticated to change it
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: Set PIN denied - not authenticated");
+        DEBUG_PRINTLN("BLE: Set PIN denied - not authenticated");
         return;
     }
 
@@ -545,7 +568,7 @@ void SetPinCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, value);
     if (error) {
-        Serial.printf("BLE: Set PIN JSON parse error: %s\n", error.c_str());
+        DEBUG_PRINTF("BLE: Set PIN JSON parse error: %s\n", error.c_str());
         return;
     }
 
@@ -554,13 +577,13 @@ void SetPinCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (strlen(newPin) == 0) {
         // Clear PIN
         storage.clearPin();
-        Serial.println("BLE: PIN cleared");
+        DEBUG_PRINTLN("BLE: PIN cleared");
     } else {
         // Set new PIN
         if (storage.setPin(newPin)) {
-            Serial.println("BLE: PIN updated");
+            DEBUG_PRINTLN("BLE: PIN updated");
         } else {
-            Serial.println("BLE: Failed to set PIN (invalid format)");
+            DEBUG_PRINTLN("BLE: Failed to set PIN (invalid format)");
         }
     }
 }
@@ -597,7 +620,7 @@ void BleSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     String json;
     serializeJson(doc, json);
 
-    Serial.printf("BLE: BLE Schedules read request (%d bytes)\n", json.length());
+    DEBUG_PRINTF("BLE: BLE Schedules read request (%d bytes)\n", json.length());
 
     // Send via chunked notifications (handles large payloads)
     manager->sendChunkedData(pCharacteristic, json);
@@ -605,7 +628,7 @@ void BleSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
 void BleSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (storage.isPinSet() && !manager->getSession().authenticated) {
-        Serial.println("BLE: BLE Schedules write denied - not authenticated");
+        DEBUG_PRINTLN("BLE: BLE Schedules write denied - not authenticated");
         return;
     }
 
@@ -623,13 +646,13 @@ void BleSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, assembledData);
     if (error) {
-        Serial.printf("BLE: BLE Schedules JSON parse error: %s\n", error.c_str());
+        DEBUG_PRINTF("BLE: BLE Schedules JSON parse error: %s\n", error.c_str());
         return;
     }
 
     JsonArray arr = doc.as<JsonArray>();
     if (!arr) {
-        Serial.println("BLE: BLE Schedules - expected JSON array");
+        DEBUG_PRINTLN("BLE: BLE Schedules - expected JSON array");
         return;
     }
 
@@ -655,7 +678,7 @@ void BleSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         storage.addBleSchedule(schedule);
     }
 
-    Serial.printf("BLE: BLE Schedules updated (%d schedules)\n", storage.getBleScheduleCount());
+    DEBUG_PRINTF("BLE: BLE Schedules updated (%d schedules)\n", storage.getBleScheduleCount());
     manager->updateCharacteristicValues();  // Refresh cached values
 }
 
@@ -668,10 +691,16 @@ void BLEManager::begin(const char* deviceId) {
         return;
     }
 
-    // Build device name: "FeedMe-XXXX"
-    snprintf(deviceName, sizeof(deviceName), "FeedMe-%s", deviceId);
+    // Use custom device name from settings if set, otherwise default to "FeedMe-XXXX"
+    Settings& settings = storage.getSettings();
+    if (settings.deviceName[0] != '\0') {
+        strncpy(deviceName, settings.deviceName, sizeof(deviceName) - 1);
+        deviceName[sizeof(deviceName) - 1] = '\0';
+    } else {
+        snprintf(deviceName, sizeof(deviceName), "FeedMe-%s", deviceId);
+    }
 
-    Serial.printf("Initializing BLE as '%s'\n", deviceName);
+    DEBUG_PRINTF("Initializing BLE as '%s'\n", deviceName);
 
     // Initialize BLE
     BLEDevice::init(deviceName);
@@ -687,9 +716,9 @@ void BLEManager::begin(const char* deviceId) {
         BLE_GAP_LE_PHY_CODED_MASK   // RX: prefer Coded PHY
     );
     if (phyResult == 0) {
-        Serial.println("BLE: Coded PHY (Long Range) enabled as default");
+        DEBUG_PRINTLN("BLE: Coded PHY (Long Range) enabled as default");
     } else {
-        Serial.printf("BLE: Failed to set Coded PHY default: %d\n", phyResult);
+        DEBUG_PRINTF("BLE: Failed to set Coded PHY default: %d\n", phyResult);
     }
 
     // Request larger MTU for big JSON payloads (schedules, history)
@@ -787,12 +816,12 @@ void BLEManager::begin(const char* deviceId) {
     pService->start();
 
     initialized = true;
-    Serial.println("BLE: Initialized with expanded GATT service");
+    DEBUG_PRINTLN("BLE: Initialized with expanded GATT service");
 }
 
 void BLEManager::start() {
     if (!initialized) {
-        Serial.println("BLE: Not initialized, cannot start");
+        DEBUG_PRINTLN("BLE: Not initialized, cannot start");
         return;
     }
 
@@ -812,7 +841,7 @@ void BLEManager::start() {
     BLEDevice::startAdvertising();
 
     running = true;
-    Serial.println("BLE: Advertising started");
+    DEBUG_PRINTLN("BLE: Advertising started");
 }
 
 void BLEManager::stop() {
@@ -831,7 +860,7 @@ void BLEManager::stop() {
     clientConnected = false;
     resetSession();
 
-    Serial.println("BLE: Stopped");
+    DEBUG_PRINTLN("BLE: Stopped");
 }
 
 void BLEManager::deinit() {
@@ -852,7 +881,7 @@ void BLEManager::deinit() {
         pWifiOtaChar = nullptr;
         pSetPinChar = nullptr;
         pBleSchedulesChar = nullptr;
-        Serial.println("BLE: Deinitialized");
+        DEBUG_PRINTLN("BLE: Deinitialized");
     }
 }
 
@@ -891,7 +920,7 @@ void BLEManager::generatePairingPin() {
     uint32_t randomNum = esp_random() % 10000;
     snprintf(session.generatedPin, sizeof(session.generatedPin), "%04u", randomNum);
 
-    Serial.printf("BLE: Generated pairing PIN: %s\n", session.generatedPin);
+    DEBUG_PRINTF("BLE: Generated pairing PIN: %s\n", session.generatedPin);
 
     // Display PIN on e-paper
     display.showPairingPin(session.generatedPin);
@@ -902,7 +931,7 @@ void BLEManager::clearPairingDisplay() {
         session.generatedPin[0] = '\0';
         // Return display to normal
         display.hidePairingPin();
-        Serial.println("BLE: Pairing PIN display cleared");
+        DEBUG_PRINTLN("BLE: Pairing PIN display cleared");
     }
 }
 
@@ -941,7 +970,7 @@ void BLEManager::updateCharacteristicValues() {
         String json;
         serializeJson(doc, json);
         pFeedSchedulesChar->setValue((uint8_t*)json.c_str(), json.length());
-        Serial.printf("BLE: Pre-populated Feed Schedules (%d bytes)\n", json.length());
+        DEBUG_PRINTF("BLE: Pre-populated Feed Schedules (%d bytes)\n", json.length());
     }
 
     // BLE Schedules
@@ -967,7 +996,7 @@ void BLEManager::updateCharacteristicValues() {
         String json;
         serializeJson(doc, json);
         pBleSchedulesChar->setValue((uint8_t*)json.c_str(), json.length());
-        Serial.printf("BLE: Pre-populated BLE Schedules (%d bytes)\n", json.length());
+        DEBUG_PRINTF("BLE: Pre-populated BLE Schedules (%d bytes)\n", json.length());
     }
 
     // Feed History
@@ -989,7 +1018,7 @@ void BLEManager::updateCharacteristicValues() {
         String json;
         serializeJson(doc, json);
         pHistoryChar->setValue((uint8_t*)json.c_str(), json.length());
-        Serial.printf("BLE: Pre-populated Feed History (%d bytes)\n", json.length());
+        DEBUG_PRINTF("BLE: Pre-populated Feed History (%d bytes)\n", json.length());
     }
 }
 
@@ -1004,7 +1033,7 @@ void BLEManager::updateCharacteristicValues() {
 
 void BLEManager::sendChunkedData(BLECharacteristic* pChar, const String& data) {
     if (!pChar || !clientConnected) {
-        Serial.println("BLE: Cannot send chunked data - no client or null characteristic");
+        DEBUG_PRINTLN("BLE: Cannot send chunked data - no client or null characteristic");
         return;
     }
 
@@ -1016,7 +1045,7 @@ void BLEManager::sendChunkedData(BLECharacteristic* pChar, const String& data) {
     size_t offset = 0;
     uint8_t chunkNum = 0;
 
-    Serial.printf("BLE: Sending %d bytes in chunks\n", totalLen);
+    DEBUG_PRINTF("BLE: Sending %d bytes in chunks\n", totalLen);
 
     while (offset < totalLen) {
         size_t remaining = totalLen - offset;
@@ -1033,7 +1062,7 @@ void BLEManager::sendChunkedData(BLECharacteristic* pChar, const String& data) {
         pChar->setValue(chunk, HEADER_SIZE + chunkDataLen);
         pChar->notify();
 
-        Serial.printf("BLE: Sent chunk %d (%d bytes, %s)\n",
+        DEBUG_PRINTF("BLE: Sent chunk %d (%d bytes, %s)\n",
                       chunkNum, chunkDataLen, moreChunks ? "more" : "last");
 
         offset += chunkDataLen;
@@ -1095,14 +1124,14 @@ bool BLEManager::receiveChunkedWrite(const BLEUUID& charUuid, const String& valu
     // Append chunk data to buffer
     writeBuffers[bufferKey] += chunkData;
 
-    Serial.printf("BLE: Received write chunk %d (%d bytes, %s)\n",
+    DEBUG_PRINTF("BLE: Received write chunk %d (%d bytes, %s)\n",
                   chunkNum, chunkData.length(), moreChunks ? "more" : "last");
 
     if (!moreChunks) {
         // Last chunk - return assembled data
         assembledData = writeBuffers[bufferKey];
         writeBuffers.erase(bufferKey);
-        Serial.printf("BLE: Assembled %d bytes from chunked writes\n", assembledData.length());
+        DEBUG_PRINTF("BLE: Assembled %d bytes from chunked writes\n", assembledData.length());
         return true;
     }
 

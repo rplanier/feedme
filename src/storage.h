@@ -76,10 +76,18 @@ struct BleSchedule {
 };
 
 // Feed event history entry
+enum class FeedStatus : uint8_t {
+    EXECUTED = 0,       // Feed ran successfully
+    SKIPPED_BATTERY = 1, // Skipped due to low battery
+    SKIPPED_RUNNING = 2, // Skipped because motor already running
+    SKIPPED_RECENT = 3   // Skipped due to recent feed (overlap protection)
+};
+
 struct FeedEvent {
     uint32_t timestamp;             // Unix epoch time
-    uint8_t duration;               // Duration in seconds
+    uint8_t duration;               // Duration in seconds (0 if skipped)
     bool manual;                    // true = Feed Now/display, false = scheduled
+    FeedStatus status;              // Execution status
     char scheduleName[24];          // Schedule name (empty if manual)
 };
 
@@ -88,10 +96,12 @@ constexpr int MAX_FEED_HISTORY = 20;
 // Settings structure
 struct Settings {
     char deviceId[5];               // 4-digit ID + null
+    char deviceName[33];            // User-defined name (max 32 chars + null), empty = use default "FeedMe-XXXX"
     uint8_t motorDuration;          // Default motor duration in seconds
     bool vacationMode;
     SleepTimeout sleepTimeout;      // Display/sleep timeout
-    int16_t timezoneOffset;         // Minutes from UTC (negative = west of UTC, like Swift's secondsFromGMT)
+    int16_t timezoneOffset;         // Minutes from UTC (negative = west of UTC) - DEPRECATED, use posixTz
+    char posixTz[48];               // POSIX timezone string (e.g., "CST6CDT,M3.2.0,M11.1.0") for DST handling
     BatteryType batteryType;        // Battery chemistry (SLA/AGM/GEL) for accurate state-of-charge
     AntennaType antennaType;        // Antenna selection (rod/onboard)
     float latitude;                 // GPS latitude for sunrise/sunset calculation
@@ -136,6 +146,7 @@ public:
     Settings& getSettings() { return settings; }
     void saveSettings();
     void loadSettings();
+    void applyTimezone();  // Apply POSIX timezone to system (enables localtime() DST handling)
 
     // Schedules
     int getScheduleCount() const { return feedSchedules.getCount(); }
@@ -170,7 +181,7 @@ public:
     bool shouldBleBeActive();
 
     // Feed history
-    void logFeedEvent(uint8_t duration, bool manual, const char* scheduleName);
+    void logFeedEvent(uint8_t duration, bool manual, const char* scheduleName, FeedStatus status = FeedStatus::EXECUTED);
     int getFeedHistoryCount() const { return feedHistoryCount; }
     const FeedEvent* getFeedEvent(int index) const;  // 0 = most recent
     String getFeedHistoryJson();

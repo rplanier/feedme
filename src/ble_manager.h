@@ -115,7 +115,7 @@ private:
     bool clientConnected = false;
     std::atomic<bool> wakeRequested{false};
     std::atomic<bool> wifiOtaRequested{false};
-    char deviceName[16] = "";  // "FeedMe-XXXX"
+    char deviceName[33] = "";  // Custom name or "FeedMe-XXXX"
 
     BLESession session;
 

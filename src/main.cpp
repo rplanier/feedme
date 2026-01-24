@@ -65,10 +65,12 @@ void formatNextFeedTime(char* buffer, size_t len);
 // =============================================================================
 
 void setup() {
+#if SERIAL_DEBUG
     Serial.begin(115200);
     delay(2000);  // Wait for USB serial to be ready
-    Serial.println("\n\n*** BOOT START ***");
+    DEBUG_PRINTLN("\n\n*** BOOT START ***");
     Serial.flush();
+#endif
 
     // Capture reset reason for debugging (before any other init that might change it)
     lastResetReason = esp_reset_reason();
@@ -76,45 +78,48 @@ void setup() {
     // Check wake reason
     esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
 
-    Serial.println("\n=== FeedMe ===");
-    Serial.printf("Version: %s\n", FEEDME_VERSION);
-    Serial.printf("Reset reason: %s\n", getResetReasonString());
-    Serial.printf("Wake reason: %d\n", wakeReason);
+    DEBUG_PRINTLN("\n=== FeedMe ===");
+    DEBUG_PRINTF("Version: %s\n", FEEDME_VERSION);
+    DEBUG_PRINTF("Reset reason: %s\n", getResetReasonString());
+    DEBUG_PRINTF("Wake reason: %d\n", wakeReason);
 
     // Initialize storage first (needed for device ID and schedules)
-    Serial.println("Initializing storage...");
+    DEBUG_PRINTLN("Initializing storage...");
     if (!storage.begin()) {
-        Serial.println("ERROR: Storage initialization failed!");
+        DEBUG_PRINTLN("ERROR: Storage initialization failed!");
     }
 
+    // Apply timezone settings (enables localtime() to handle DST automatically)
+    storage.applyTimezone();
+
     // Initialize RTC manager
-    Serial.println("Initializing RTC...");
+    DEBUG_PRINTLN("Initializing RTC...");
     rtcManager.begin();
 
     // Initialize display (e-ink, no backlight needed)
-    Serial.println("Initializing display...");
+    DEBUG_PRINTLN("Initializing display...");
     display.begin();
 
     // Initialize buttons
-    Serial.println("Initializing buttons...");
+    DEBUG_PRINTLN("Initializing buttons...");
     buttons.begin();
 
     // Initialize battery
-    Serial.println("Initializing battery...");
+    DEBUG_PRINTLN("Initializing battery...");
     battery.begin();
 
     // Initialize motor
-    Serial.println("Initializing motor...");
+    DEBUG_PRINTLN("Initializing motor...");
     motor.begin();
 
     // Initialize radio manager (handles both WiFi and BLE)
-    Serial.println("Initializing radio...");
+    DEBUG_PRINTLN("Initializing radio...");
     radioManager.begin(storage.getDeviceId());
 
     // Handle wake reason
     switch (wakeReason) {
         case ESP_SLEEP_WAKEUP_TIMER:
-            Serial.println("Woke from RTC timer");
+            DEBUG_PRINTLN("Woke from RTC timer");
             // Check if we woke for a feed schedule (only if time is synced)
             if (rtcManager.isTimeSynced()) {
                 checkFeedSchedules();
@@ -125,16 +130,16 @@ void setup() {
 
         case ESP_SLEEP_WAKEUP_EXT0:
         case ESP_SLEEP_WAKEUP_EXT1:
-            Serial.println("Woke from button press");
+            DEBUG_PRINTLN("Woke from button press");
             updateActivityTimer();
             break;
 
         default:
-            Serial.println("Cold boot or other wake reason");
+            DEBUG_PRINTLN("Cold boot or other wake reason");
             updateActivityTimer();
             // Start in BLE mode (lower power than WiFi)
             // If BLE schedules exist, allow 5-minute grace period after boot
-            Serial.println("Starting BLE...");
+            DEBUG_PRINTLN("Starting BLE...");
             radioManager.transitionToBle();
             break;
     }
@@ -154,9 +159,9 @@ void setup() {
     };
     esp_task_wdt_init(&wdt_config);
     esp_task_wdt_add(NULL);  // Add current task to watchdog
-    Serial.printf("Watchdog initialized (%lu sec timeout)\n", WATCHDOG_TIMEOUT_SEC);
+    DEBUG_PRINTF("Watchdog initialized (%lu sec timeout)\n", WATCHDOG_TIMEOUT_SEC);
 
-    Serial.println("Setup complete!");
+    DEBUG_PRINTLN("Setup complete!");
 }
 
 // =============================================================================
@@ -180,7 +185,7 @@ void loop() {
     // Update last feed completion time when motor stops
     if (wasMotorRunning && !motor.isRunning()) {
         lastFeedCompletedTime = millis();
-        Serial.println("Feed completed - updating lastFeedCompletedTime");
+        DEBUG_PRINTLN("Feed completed - updating lastFeedCompletedTime");
     }
 
     // Drain ALL pending button events before refreshing display
@@ -192,13 +197,13 @@ void loop() {
         updateActivityTimer();
         // Debug: log button events
         if (event == ButtonEvent::NEXT_PRESS) {
-            Serial.println("Button: NEXT_PRESS");
+            DEBUG_PRINTLN("Button: NEXT_PRESS");
         } else if (event == ButtonEvent::NEXT_HOLD) {
-            Serial.printf("Button: NEXT_HOLD (screen=%d)\n", static_cast<int>(display.getScreen()));
+            DEBUG_PRINTF("Button: NEXT_HOLD (screen=%d)\n", static_cast<int>(display.getScreen()));
         } else if (event == ButtonEvent::PREV_PRESS) {
-            Serial.println("Button: PREV_PRESS");
+            DEBUG_PRINTLN("Button: PREV_PRESS");
         } else if (event == ButtonEvent::PREV_HOLD) {
-            Serial.println("Button: PREV_HOLD");
+            DEBUG_PRINTLN("Button: PREV_HOLD");
         }
         display.handleButton(event);
     }
@@ -207,10 +212,10 @@ void loop() {
     if (display.shouldToggleWifi()) {
         display.clearWifiToggleRequest();
         if (radioManager.isWifiActive()) {
-            Serial.println("User requested WiFi stop");
+            DEBUG_PRINTLN("User requested WiFi stop");
             radioManager.transitionToBle();
         } else {
-            Serial.println("User requested WiFi start");
+            DEBUG_PRINTLN("User requested WiFi start");
             radioManager.transitionToWifi();
         }
         // Force immediate status update so display shows new WiFi state
@@ -222,7 +227,7 @@ void loop() {
     if (display.shouldStartFeedCountdown()) {
         display.clearFeedCountdownRequest();
 
-        Serial.println("Manual feed countdown starting...");
+        DEBUG_PRINTLN("Manual feed countdown starting...");
 
         // Show initial warning on display
         esp_task_wdt_reset();  // Reset before blocking display operation
@@ -232,7 +237,7 @@ void loop() {
         // Countdown with periodic display updates
         bool cancelled = false;
         for (int i = MANUAL_FEED_COUNTDOWN_SEC; i > 0 && !cancelled; i--) {
-            Serial.printf("Feed in %d...\n", i);
+            DEBUG_PRINTF("Feed in %d...\n", i);
             esp_task_wdt_reset();  // Keep watchdog happy
 
             // Update display at key intervals (10s, 5s, 3s)
@@ -248,7 +253,7 @@ void loop() {
                 ButtonEvent event = buttons.getEvent();
                 if (event == ButtonEvent::NEXT_PRESS || event == ButtonEvent::PREV_PRESS) {
                     cancelled = true;
-                    Serial.println("Feed cancelled by button press");
+                    DEBUG_PRINTLN("Feed cancelled by button press");
                     break;
                 }
                 delay(10);
@@ -270,7 +275,7 @@ void loop() {
             display.showFeedingNow();
             esp_task_wdt_reset();  // Reset after display operation
 
-            Serial.printf("Feeding now! (%d seconds)\n", MANUAL_FEED_DURATION_SEC);
+            DEBUG_PRINTF("Feeding now! (%d seconds)\n", MANUAL_FEED_DURATION_SEC);
             motor.startThrow(MANUAL_FEED_DURATION_SEC);
 
             // Log manual feed event to history
@@ -400,16 +405,16 @@ void handleSleepTimeout() {
 // =============================================================================
 
 void enterDeepSleep() {
-    Serial.println("Entering deep sleep...");
+    DEBUG_PRINTLN("Entering deep sleep...");
 
     // Calculate next wake time
     uint64_t sleepTimeUs = calculateNextWakeTime();
 
     if (sleepTimeUs > 0) {
-        Serial.printf("Will wake in %llu seconds\n", sleepTimeUs / 1000000ULL);
+        DEBUG_PRINTF("Will wake in %llu seconds\n", sleepTimeUs / 1000000ULL);
         esp_sleep_enable_timer_wakeup(sleepTimeUs);
     } else {
-        Serial.println("No scheduled wake time, will wake on button only");
+        DEBUG_PRINTLN("No scheduled wake time, will wake on button only");
     }
 
     // Configure GPIO wake on either button (active low with pull-up)
@@ -544,12 +549,13 @@ uint64_t calculateNextWakeTime() {
 // =============================================================================
 
 // Get the effective feed time for a schedule (handles sunrise/sunset calculation)
+// Returns LOCAL time for comparison with local current time
 // Returns true if valid time was calculated, false if location not set for sun-based schedules
-bool getScheduleEffectiveTime(const Schedule* sched, const DateTime& now, int16_t tzOffset, int& hour, int& minute) {
+bool getScheduleEffectiveTime(const Schedule* sched, const DateTime& localNow, int16_t tzOffset, int& hour, int& minute) {
     Settings& settings = storage.getSettings();
 
     if (sched->scheduleType == ScheduleType::SPECIFIC_TIME) {
-        // Use stored UTC time directly
+        // Schedules are stored in local time
         hour = sched->hour;
         minute = sched->minute;
         return true;
@@ -560,12 +566,13 @@ bool getScheduleEffectiveTime(const Schedule* sched, const DateTime& now, int16_
         return false;  // Can't calculate without location
     }
 
+    // SunCalc returns local time (minutes from midnight)
     int sunMinutes;
     if (sched->scheduleType == ScheduleType::SUNRISE) {
-        sunMinutes = SunCalc::getSunrise(now.year(), now.month(), now.day(),
+        sunMinutes = SunCalc::getSunrise(localNow.year(), localNow.month(), localNow.day(),
                                           settings.latitude, settings.longitude, tzOffset);
     } else {  // SUNSET
-        sunMinutes = SunCalc::getSunset(now.year(), now.month(), now.day(),
+        sunMinutes = SunCalc::getSunset(localNow.year(), localNow.month(), localNow.day(),
                                          settings.latitude, settings.longitude, tzOffset);
     }
 
@@ -580,14 +587,9 @@ bool getScheduleEffectiveTime(const Schedule* sched, const DateTime& now, int16_
     while (sunMinutes < 0) sunMinutes += 1440;
     while (sunMinutes >= 1440) sunMinutes -= 1440;
 
-    // Convert back to UTC for comparison (sunMinutes is in local time)
-    // UTC = local - offset (where offset is negative for west of UTC)
-    int utcMinutes = sunMinutes - tzOffset;
-    while (utcMinutes < 0) utcMinutes += 1440;
-    while (utcMinutes >= 1440) utcMinutes -= 1440;
-
-    hour = utcMinutes / 60;
-    minute = utcMinutes % 60;
+    // Return local time (no UTC conversion needed since we compare in local time)
+    hour = sunMinutes / 60;
+    minute = sunMinutes % 60;
     return true;
 }
 
@@ -601,28 +603,40 @@ void checkFeedSchedules() {
         return;
     }
 
+    // Get current UTC time from RTC
     DateTime now = rtcManager.now();
+    time_t utcTime = now.unixtime();
 
-    // Reset executed mask if it's a new day
-    if (now.day() != lastExecutedScheduleDay) {
-        lastExecutedScheduleDay = now.day();
+    // Convert to local time using system timezone (handles DST automatically)
+    // This works because we called setenv("TZ", ...) and tzset() in applyTimezone()
+    struct tm localTm;
+    localtime_r(&utcTime, &localTm);
+
+    int currentHour = localTm.tm_hour;
+    int currentMinute = localTm.tm_min;
+    int currentDay = localTm.tm_wday;  // 0 = Sunday
+    int currentMonth = localTm.tm_mon + 1;
+    int currentDayOfMonth = localTm.tm_mday;
+
+    // For sunrise/sunset calculations, create a local DateTime
+    // (mktime normalizes the struct tm to a timestamp, then we create DateTime from it)
+    time_t localTime = mktime(&localTm);
+    DateTime localNow = DateTime((uint32_t)localTime);
+    int16_t tzOffset = storage.getSettings().timezoneOffset;  // Still needed for SunCalc
+
+    // Reset executed mask if it's a new local day
+    if (currentDayOfMonth != lastExecutedScheduleDay) {
+        lastExecutedScheduleDay = currentDayOfMonth;
         executedScheduleMask = 0;
     }
-
-    int currentHour = now.hour();
-    int currentMinute = now.minute();
-    int currentDay = now.dayOfTheWeek();
-    int currentMonth = now.month();
-    int currentDayOfMonth = now.day();
-    int16_t tzOffset = storage.getSettings().timezoneOffset;
 
     int scheduleCount = storage.getScheduleCount();
     for (int i = 0; i < scheduleCount; i++) {
         Schedule* sched = storage.getSchedule(i);
         if (!sched || !sched->enabled) continue;
 
-        // Check if already executed today
-        if (executedScheduleMask & (1U << sched->id)) continue;
+        // Check if already executed today (use array index, not ID which can exceed 31)
+        if (executedScheduleMask & (1U << i)) continue;
 
         // Check day of week
         if (!sched->isActiveOnDay(currentDay)) continue;
@@ -632,44 +646,55 @@ void checkFeedSchedules() {
 
         // Get effective time (handles sunrise/sunset calculation)
         int schedHour, schedMinute;
-        if (!getScheduleEffectiveTime(sched, now, tzOffset, schedHour, schedMinute)) {
+        if (!getScheduleEffectiveTime(sched, localNow, tzOffset, schedHour, schedMinute)) {
             continue;  // Skip if can't calculate time (e.g., location not set)
         }
 
-        // Check if it's time (within the check interval window)
-        if (schedHour == currentHour && schedMinute == currentMinute) {
-            Serial.printf("Schedule %s triggered at %02d:%02d\n", sched->name, schedHour, schedMinute);
+        // Check if it's time to run this schedule
+        // Convert both times to minutes-since-midnight for easier comparison
+        int currentTotalMinutes = currentHour * 60 + currentMinute;
+        int schedTotalMinutes = schedHour * 60 + schedMinute;
+
+        // Match if we're at exactly the scheduled minute
+        // (checking every 10 seconds ensures we catch the right minute)
+        if (currentTotalMinutes == schedTotalMinutes) {
+            DEBUG_PRINTF("Schedule %s triggered at %02d:%02d (current: %02d:%02d)\n",
+                        sched->name, schedHour, schedMinute, currentHour, currentMinute);
 
             // Mark as executed (even if we skip due to overlap/running)
-            executedScheduleMask |= (1U << sched->id);
+            // Use array index, not ID (ID can exceed 31 causing undefined behavior)
+            executedScheduleMask |= (1U << i);
 
             // Check if motor is already running (overlap protection)
             if (motor.isRunning()) {
-                Serial.println("Motor already running - skipping feed");
+                DEBUG_PRINTLN("Motor already running - skipping feed");
+                storage.logFeedEvent(0, false, sched->name, FeedStatus::SKIPPED_RUNNING);
                 continue;
             }
 
             // Check if a feed was recently completed (overlap protection)
             uint32_t timeSinceLastFeed = millis() - lastFeedCompletedTime;
             if (lastFeedCompletedTime > 0 && timeSinceLastFeed < MIN_FEED_INTERVAL_MS) {
-                Serial.printf("Feed skipped - only %lu ms since last feed\n", timeSinceLastFeed);
+                DEBUG_PRINTF("Feed skipped - only %lu ms since last feed\n", timeSinceLastFeed);
+                storage.logFeedEvent(0, false, sched->name, FeedStatus::SKIPPED_RECENT);
                 continue;
             }
 
             // Check battery before running motor
             if (battery.getStatus() == BatteryStatus::CRITICAL) {
-                Serial.println("Battery critical - skipping feed");
+                DEBUG_PRINTLN("Battery critical - skipping feed");
+                storage.logFeedEvent(0, false, sched->name, FeedStatus::SKIPPED_BATTERY);
                 continue;
             }
 
-            Serial.printf("Executing feed schedule: %s\n", sched->name);
+            DEBUG_PRINTF("Executing feed schedule: %s\n", sched->name);
 
             // Run motor with schedule-specific or default duration
             uint8_t duration = sched->duration > 0 ? sched->duration : motor.getDefaultDuration();
             motor.startThrow(duration);
 
             // Log feed event to history
-            storage.logFeedEvent(duration, false, sched->name);
+            storage.logFeedEvent(duration, false, sched->name, FeedStatus::EXECUTED);
 
             // Keep display/activity alive during motor run
             updateActivityTimer();
@@ -708,7 +733,7 @@ void formatNextFeedTime(char* buffer, size_t len) {
 
     // Check schedules for today and the next 7 days
     int scheduleCount = storage.getScheduleCount();
-    Serial.printf("formatNextFeedTime: scheduleCount=%d\n", scheduleCount);
+    DEBUG_PRINTF("formatNextFeedTime: scheduleCount=%d\n", scheduleCount);
 
     for (int dayOffset = 0; dayOffset < 7; dayOffset++) {
         int checkDay = (currentDay + dayOffset) % 7;
@@ -733,7 +758,7 @@ void formatNextFeedTime(char* buffer, size_t len) {
                 nearestDay = checkDay;
                 nearestHour = sched->hour;
                 nearestMinute = sched->minute;
-                Serial.printf("formatNextFeedTime: Found schedule id=%d hour=%d min=%d enabled=%d\n",
+                DEBUG_PRINTF("formatNextFeedTime: Found schedule id=%d hour=%d min=%d enabled=%d\n",
                               sched->id, sched->hour, sched->minute, sched->enabled);
             }
         }
