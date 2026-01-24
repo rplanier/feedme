@@ -709,28 +709,35 @@ void formatNextFeedTime(char* buffer, size_t len) {
     Settings& settings = storage.getSettings();
     int16_t tzOffset = settings.timezoneOffset;
 
-    // Get current local time
-    DateTime now = rtcManager.now();
-    int currentHour = now.hour();
-    int currentMinute = now.minute();
-    int currentDay = now.dayOfTheWeek();
+    // Get current local time using system timezone (same approach as getNextRunTime)
+    time_t utcNow = time(nullptr);
+    struct tm localTm;
+    localtime_r(&utcNow, &localTm);
+
+    int currentDay = localTm.tm_wday;
+    int currentHour = localTm.tm_hour;
+    int currentMinute = localTm.tm_min;
+    int currentMonth = localTm.tm_mon + 1;
+    int currentDayOfMonth = localTm.tm_mday;
     uint32_t currentDaySeconds = currentHour * 3600 + currentMinute * 60;
+
+    // Create DateTime for sunrise/sunset calculations
+    time_t localTime = mktime(&localTm);
+    DateTime localNow = DateTime((uint32_t)localTime);
 
     uint32_t nearestSeconds = UINT32_MAX;
     int nearestDayOffset = -1;
     int nearestHour = 0;
     int nearestMinute = 0;
 
-    // Check schedules for today and the next 7 days
     int scheduleCount = storage.getScheduleCount();
-    DEBUG_PRINTF("formatNextFeedTime: scheduleCount=%d\n", scheduleCount);
 
     for (int dayOffset = 0; dayOffset < 7; dayOffset++) {
         int checkDay = (currentDay + dayOffset) % 7;
         uint32_t baseSeconds = dayOffset * 86400;
 
-        // Calculate the date for this day offset (needed for sunrise/sunset)
-        DateTime checkDate = DateTime(now.unixtime() + (dayOffset * 86400));
+        // Calculate the date for this day offset (needed for sunrise/sunset and date filtering)
+        DateTime checkDate = DateTime(localNow.unixtime() + (dayOffset * 86400));
 
         for (int i = 0; i < scheduleCount; i++) {
             Schedule* sched = storage.getSchedule(i);
@@ -738,10 +745,33 @@ void formatNextFeedTime(char* buffer, size_t len) {
             if (!sched->isActiveOnDay(checkDay)) continue;
             if (!sched->isActiveOnDate(checkDate.month(), checkDate.day())) continue;
 
-            // Get the effective time for this schedule (handles sunrise/sunset calculation)
+            // Calculate the effective time for this schedule
             int schedHour, schedMinute;
-            if (!getScheduleEffectiveTime(sched, checkDate, tzOffset, schedHour, schedMinute)) {
-                continue;  // Couldn't calculate time (e.g., no location for sun-based schedule)
+
+            if (sched->scheduleType == ScheduleType::SPECIFIC_TIME) {
+                schedHour = sched->hour;
+                schedMinute = sched->minute;
+            } else if (settings.locationSet) {
+                // Calculate sunrise/sunset for the target day
+                int sunMinutes;
+                if (sched->scheduleType == ScheduleType::SUNRISE) {
+                    sunMinutes = SunCalc::getSunrise(checkDate.year(), checkDate.month(), checkDate.day(),
+                                                      settings.latitude, settings.longitude, tzOffset);
+                } else {
+                    sunMinutes = SunCalc::getSunset(checkDate.year(), checkDate.month(), checkDate.day(),
+                                                     settings.latitude, settings.longitude, tzOffset);
+                }
+
+                if (sunMinutes < 0) continue;
+
+                sunMinutes += sched->sunOffset;
+                while (sunMinutes < 0) sunMinutes += 1440;
+                while (sunMinutes >= 1440) sunMinutes -= 1440;
+
+                schedHour = sunMinutes / 60;
+                schedMinute = sunMinutes % 60;
+            } else {
+                continue;  // Can't calculate without location
             }
 
             uint32_t schedSeconds = schedHour * 3600 + schedMinute * 60;
@@ -757,8 +787,6 @@ void formatNextFeedTime(char* buffer, size_t len) {
                 nearestDayOffset = dayOffset;
                 nearestHour = schedHour;
                 nearestMinute = schedMinute;
-                DEBUG_PRINTF("formatNextFeedTime: Found schedule id=%d hour=%d min=%d type=%d\n",
-                              sched->id, schedHour, schedMinute, (int)sched->scheduleType);
             }
         }
     }
