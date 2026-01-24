@@ -1,40 +1,12 @@
 #pragma once
 
 #include <Arduino.h>
-#include <time.h>
-
-// Simple DateTime class for compatibility with RTClib when we switch to DS3231
-class DateTime {
-public:
-    DateTime() : unixTime(0) {}
-    DateTime(uint32_t t) : unixTime(t) {}
-    DateTime(uint16_t year, uint8_t month, uint8_t day,
-             uint8_t hour = 0, uint8_t minute = 0, uint8_t second = 0);
-
-    uint16_t year() const;
-    uint8_t month() const;
-    uint8_t day() const;
-    uint8_t hour() const;
-    uint8_t minute() const;
-    uint8_t second() const;
-    uint8_t dayOfTheWeek() const;  // 0 = Sunday
-
-    uint32_t unixtime() const { return unixTime; }
-
-    // Comparison operators
-    bool operator<(const DateTime& other) const { return unixTime < other.unixTime; }
-    bool operator>(const DateTime& other) const { return unixTime > other.unixTime; }
-    bool operator<=(const DateTime& other) const { return unixTime <= other.unixTime; }
-    bool operator>=(const DateTime& other) const { return unixTime >= other.unixTime; }
-    bool operator==(const DateTime& other) const { return unixTime == other.unixTime; }
-
-private:
-    uint32_t unixTime;
-};
+#include <Wire.h>
+#include <RTClib.h>
 
 class RTCManager {
 public:
-    void begin();
+    bool begin();
 
     // Time access
     DateTime now();
@@ -45,8 +17,11 @@ public:
     bool isTimeSynced() const { return timeSynced; }
     void setTimeSynced(bool synced);
 
-    // For future DS3231: check if RTC lost power
-    bool lostPower() const;
+    // Check if RTC lost power (battery died or first boot)
+    bool lostPower();
+
+    // Check if RTC is available
+    bool isAvailable() const { return rtcAvailable; }
 
     // Format helpers (UTC time from RTC)
     void formatTime(char* buffer, size_t len);       // "HH:MM"
@@ -63,11 +38,14 @@ public:
     DateTime nowLocal(int16_t tzOffset);
 
 private:
+    RTC_DS3231 rtc;
     bool initialized = false;
+    bool rtcAvailable = false;
     bool timeSynced = false;
 
     void loadSyncStatus();
     void saveSyncStatus();
+    void syncSystemTime();  // Sync ESP32 system time from DS3231
 };
 
 extern RTCManager rtcManager;

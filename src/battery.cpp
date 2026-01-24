@@ -97,7 +97,7 @@ float Battery::readRawVoltage() {
     static uint32_t lastDebugPrint = 0;
     if (millis() - lastDebugPrint >= 10000) {
         lastDebugPrint = millis();
-        Serial.printf("Battery: raw=%d, adcV=%.3f, battV=%.2f\n",
+        DEBUG_PRINTF("Battery: raw=%d, adcV=%.3f, battV=%.2f\n",
                       rawValue, adcVoltage, batteryVoltage);
     }
 

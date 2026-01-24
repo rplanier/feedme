@@ -23,12 +23,12 @@ void WiFiManager::begin(const char* deviceId) {
         }
         password[8] = '\0';
         prefs.putString("password", password);
-        Serial.printf("WiFi: Generated new password: %s\n", password);
+        DEBUG_PRINTF("WiFi: Generated new password: %s\n", password);
     }
     prefs.end();
 
     initialized = true;
-    Serial.printf("WiFi: Initialized, SSID: %s, Pass: %s\n", ssid, password);
+    DEBUG_PRINTF("WiFi: Initialized, SSID: %s, Pass: %s\n", ssid, password);
 }
 
 void WiFiManager::update() {
@@ -45,7 +45,7 @@ void WiFiManager::update() {
     int currentClients = WiFi.softAPgetStationNum();
     if (currentClients != clientCount) {
         clientCount = currentClients;
-        Serial.printf("WiFi: %d client(s) connected\n", clientCount);
+        DEBUG_PRINTF("WiFi: %d client(s) connected\n", clientCount);
     }
 
     // Idle timer is now controlled by heartbeat from web UI
@@ -61,7 +61,7 @@ void WiFiManager::start() {
     setupAP();
     wifiRunning = true;
     idleStartTime = millis();  // Start the idle timer
-    Serial.println("WiFi: AP started, idle timer started");
+    DEBUG_PRINTLN("WiFi: AP started, idle timer started");
 }
 
 void WiFiManager::stop() {
@@ -72,7 +72,7 @@ void WiFiManager::stop() {
     stopAP();
     wifiRunning = false;
     clientCount = 0;
-    Serial.println("WiFi: AP stopped");
+    DEBUG_PRINTLN("WiFi: AP stopped");
 }
 
 uint32_t WiFiManager::getIdleTime() const {
@@ -117,7 +117,7 @@ void WiFiManager::setupAP() {
     bool success = WiFi.softAP(ssid, password, 1, false, 4);
 
     if (!success) {
-        Serial.println("WiFi: ERROR - Failed to start AP!");
+        DEBUG_PRINTLN("WiFi: ERROR - Failed to start AP!");
         return;
     }
 
@@ -130,8 +130,8 @@ void WiFiManager::setupAP() {
     IPAddress subnet(255, 255, 255, 0);
     WiFi.softAPConfig(localIP, gateway, subnet);
 
-    Serial.printf("WiFi: AP started - SSID: %s, Pass: %s\n", ssid, password);
-    Serial.printf("WiFi: AP IP address: %s\n", WiFi.softAPIP().toString().c_str());
+    DEBUG_PRINTF("WiFi: AP started - SSID: %s, Pass: %s\n", ssid, password);
+    DEBUG_PRINTF("WiFi: AP IP address: %s\n", WiFi.softAPIP().toString().c_str());
 
     // Setup DNS server for captive portal
     dnsServer = new DNSServer();

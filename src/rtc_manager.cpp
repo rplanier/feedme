@@ -6,91 +6,71 @@
 RTCManager rtcManager;
 
 // =============================================================================
-// DateTime Implementation
+// RTCManager Implementation - DS3231M RTC
 // =============================================================================
 
-DateTime::DateTime(uint16_t year, uint8_t month, uint8_t day,
-                   uint8_t hour, uint8_t minute, uint8_t second) {
-    struct tm t = {};
-    t.tm_year = year - 1900;
-    t.tm_mon = month - 1;
-    t.tm_mday = day;
-    t.tm_hour = hour;
-    t.tm_min = minute;
-    t.tm_sec = second;
-    unixTime = mktime(&t);
-}
+bool RTCManager::begin() {
+    // Initialize I2C with correct pins for DS3231M
+    Wire.begin(PIN_RTC_SDA, PIN_RTC_SCL);
 
-uint16_t DateTime::year() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_year + 1900;
-}
+    // Try to initialize DS3231
+    if (!rtc.begin(&Wire)) {
+        DEBUG_PRINTLN("RTC: DS3231M not found!");
+        rtcAvailable = false;
+        initialized = true;
+        return false;
+    }
 
-uint8_t DateTime::month() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_mon + 1;
-}
+    rtcAvailable = true;
+    DEBUG_PRINTLN("RTC: DS3231M initialized");
 
-uint8_t DateTime::day() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_mday;
-}
+    // Check if RTC lost power (battery died or first use)
+    if (rtc.lostPower()) {
+        DEBUG_PRINTLN("RTC: DS3231M lost power, time is invalid");
+        setTimeSynced(false);
+    } else {
+        // RTC has valid time, load sync status from preferences
+        loadSyncStatus();
 
-uint8_t DateTime::hour() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_hour;
-}
+        // Sync ESP32 system time from DS3231
+        syncSystemTime();
+    }
 
-uint8_t DateTime::minute() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_min;
-}
-
-uint8_t DateTime::second() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_sec;
-}
-
-uint8_t DateTime::dayOfTheWeek() const {
-    time_t t = unixTime;
-    struct tm* tm = localtime(&t);
-    return tm->tm_wday;  // 0 = Sunday
-}
-
-// =============================================================================
-// RTCManager Implementation
-// =============================================================================
-
-void RTCManager::begin() {
-    // Load sync status from preferences
-    loadSyncStatus();
-
-    // If time is clearly invalid (before 2024), mark as not synced
+    // Validate time - if year < 2024, mark as not synced
     DateTime current = now();
     if (current.year() < 2024) {
-        Serial.println("RTC: Time appears invalid (year < 2024)");
+        DEBUG_PRINTLN("RTC: Time appears invalid (year < 2024)");
         setTimeSynced(false);
     }
 
     initialized = true;
-    Serial.printf("RTC: Initialized (internal), synced=%d, time=%04d-%02d-%02d %02d:%02d:%02d\n",
+    DEBUG_PRINTF("RTC: DS3231M ready, synced=%d, time=%04d-%02d-%02d %02d:%02d:%02d\n",
                   timeSynced, current.year(), current.month(), current.day(),
                   current.hour(), current.minute(), current.second());
+
+    return true;
 }
 
 DateTime RTCManager::now() {
+    if (rtcAvailable) {
+        return rtc.now();
+    }
+    // Fallback to system time if DS3231 not available
     time_t t;
     time(&t);
     return DateTime(t);
 }
 
 void RTCManager::setTime(uint32_t unixTime) {
+    DateTime dt(unixTime);
+
+    if (rtcAvailable) {
+        // Set DS3231M time
+        rtc.adjust(dt);
+        DEBUG_PRINTLN("RTC: DS3231M time updated");
+    }
+
+    // Also set ESP32 system time for compatibility
     struct timeval tv;
     tv.tv_sec = unixTime;
     tv.tv_usec = 0;
@@ -98,8 +78,7 @@ void RTCManager::setTime(uint32_t unixTime) {
 
     setTimeSynced(true);
 
-    DateTime dt(unixTime);
-    Serial.printf("RTC: Time set to %04d-%02d-%02d %02d:%02d:%02d\n",
+    DEBUG_PRINTF("RTC: Time set to %04d-%02d-%02d %02d:%02d:%02d\n",
                   dt.year(), dt.month(), dt.day(),
                   dt.hour(), dt.minute(), dt.second());
 }
@@ -108,17 +87,19 @@ void RTCManager::setTime(const DateTime& dt) {
     setTime(dt.unixtime());
 }
 
-bool RTCManager::lostPower() const {
-    // Internal RTC always loses time on power loss
-    // This will return true after reboot if time wasn't synced
-    return !timeSynced;
+bool RTCManager::lostPower() {
+    if (rtcAvailable) {
+        return rtc.lostPower();
+    }
+    // If RTC not available, consider power always lost
+    return true;
 }
 
 void RTCManager::setTimeSynced(bool synced) {
     if (timeSynced != synced) {
         timeSynced = synced;
         saveSyncStatus();
-        Serial.printf("RTC: Sync status changed to %d\n", synced);
+        DEBUG_PRINTF("RTC: Sync status changed to %d\n", synced);
     }
 }
 
@@ -134,6 +115,21 @@ void RTCManager::saveSyncStatus() {
     prefs.begin(PREF_NAMESPACE, false);
     prefs.putBool(PREF_TIME_SYNCED, timeSynced);
     prefs.end();
+}
+
+void RTCManager::syncSystemTime() {
+    if (!rtcAvailable) return;
+
+    // Read time from DS3231 and set ESP32 system time
+    DateTime dt = rtc.now();
+    struct timeval tv;
+    tv.tv_sec = dt.unixtime();
+    tv.tv_usec = 0;
+    settimeofday(&tv, nullptr);
+
+    DEBUG_PRINTF("RTC: System time synced from DS3231M: %04d-%02d-%02d %02d:%02d:%02d\n",
+                  dt.year(), dt.month(), dt.day(),
+                  dt.hour(), dt.minute(), dt.second());
 }
 
 void RTCManager::formatTime(char* buffer, size_t len) {

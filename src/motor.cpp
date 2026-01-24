@@ -25,7 +25,7 @@ void Motor::update() {
     if (safetyTriggered) {
         safetyTriggered = false;
         running = false;
-        Serial.println("Motor: SAFETY TIMEOUT - motor stopped");
+        DEBUG_PRINTLN("Motor: SAFETY TIMEOUT - motor stopped");
     }
 
     if (!running) {
@@ -36,13 +36,13 @@ void Motor::update() {
     uint32_t elapsed = millis() - startTime;
     if (elapsed >= runDurationMs) {
         stop();
-        Serial.println("Motor: Normal stop after duration elapsed");
+        DEBUG_PRINTLN("Motor: Normal stop after duration elapsed");
     }
 }
 
 void Motor::startThrow(uint8_t durationSec) {
     if (running) {
-        Serial.println("Motor: Already running, ignoring start request");
+        DEBUG_PRINTLN("Motor: Already running, ignoring start request");
         return;
     }
 
@@ -52,7 +52,7 @@ void Motor::startThrow(uint8_t durationSec) {
     // Clamp to maximum
     if (duration > MOTOR_MAX_DURATION_SEC) {
         duration = MOTOR_MAX_DURATION_SEC;
-        Serial.printf("Motor: Duration clamped to max %d sec\n", MOTOR_MAX_DURATION_SEC);
+        DEBUG_PRINTF("Motor: Duration clamped to max %d sec\n", MOTOR_MAX_DURATION_SEC);
     }
 
     runDurationMs = duration * 1000UL;
@@ -68,7 +68,7 @@ void Motor::startThrow(uint8_t durationSec) {
     activateMotor();
     running = true;
 
-    Serial.printf("Motor: Started for %d seconds\n", duration);
+    DEBUG_PRINTF("Motor: Started for %d seconds\n", duration);
 }
 
 void Motor::stop() {
@@ -80,7 +80,7 @@ void Motor::stop() {
         timerStop(safetyTimer);
     }
 
-    Serial.println("Motor: Stopped");
+    DEBUG_PRINTLN("Motor: Stopped");
 }
 
 uint8_t Motor::getRemainingSeconds() const {
@@ -108,7 +108,7 @@ void Motor::setDefaultDuration(uint8_t durationSec) {
 
 void Motor::activateMotor() {
     bool pinState = MOTOR_INVERTED ? LOW : HIGH;
-    Serial.printf("Motor: Activating - setting GPIO %d to %s\n", PIN_MOTOR_RELAY, pinState ? "HIGH" : "LOW");
+    DEBUG_PRINTF("Motor: Activating - setting GPIO %d to %s\n", PIN_MOTOR_RELAY, pinState ? "HIGH" : "LOW");
     digitalWrite(PIN_MOTOR_RELAY, pinState);
 }
 

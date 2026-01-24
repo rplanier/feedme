@@ -24,7 +24,7 @@ void RadioManager::begin(const char* id) {
     // Initialize BLE manager
     bleManager.begin(deviceId);
 
-    Serial.println("RadioManager: Initialized");
+    DEBUG_PRINTLN("RadioManager: Initialized");
 }
 
 bool RadioManager::isInBootGracePeriod() const {
@@ -34,12 +34,12 @@ bool RadioManager::isInBootGracePeriod() const {
 void RadioManager::update() {
     // Check for BLE wake request (user connected via BLE and sent wake command)
     if (hasBleWakeRequest()) {
-        Serial.println("RadioManager: BLE wake request detected");
+        DEBUG_PRINTLN("RadioManager: BLE wake request detected");
         clearBleWakeRequest();
         if (!isWifiActive()) {
             transitionToWifi();
         } else {
-            Serial.println("RadioManager: WiFi already running, ignoring wake request");
+            DEBUG_PRINTLN("RadioManager: WiFi already running, ignoring wake request");
         }
     }
 
@@ -49,7 +49,7 @@ void RadioManager::update() {
 
         // Check for WiFi idle timeout
         if (shouldWifiAutoStop()) {
-            Serial.println("RadioManager: WiFi idle timeout");
+            DEBUG_PRINTLN("RadioManager: WiFi idle timeout");
             transitionToBle();
         }
     } else if (currentMode == Mode::BLE) {
@@ -62,7 +62,7 @@ void RadioManager::transitionToWifi() {
         return;  // Already in WiFi mode
     }
 
-    Serial.println("RadioManager: Transitioning to WiFi");
+    DEBUG_PRINTLN("RadioManager: Transitioning to WiFi");
 
     // Stop BLE first if running (they share the radio)
     if (currentMode == Mode::BLE) {
@@ -79,7 +79,7 @@ void RadioManager::transitionToBle() {
         return;  // Already in BLE mode
     }
 
-    Serial.println("RadioManager: Transitioning to BLE");
+    DEBUG_PRINTLN("RadioManager: Transitioning to BLE");
 
     // Stop WiFi first if running
     if (currentMode == Mode::WIFI) {
@@ -89,7 +89,7 @@ void RadioManager::transitionToBle() {
     // During boot grace period, always start BLE regardless of schedules
     // This allows initial app connection for configuration
     if (isInBootGracePeriod()) {
-        Serial.println("RadioManager: Boot grace period active - starting BLE");
+        DEBUG_PRINTLN("RadioManager: Boot grace period active - starting BLE");
         startBle();
         currentMode = Mode::BLE;
         return;
@@ -101,12 +101,12 @@ void RadioManager::transitionToBle() {
         currentMode = Mode::BLE;
     } else {
         currentMode = Mode::IDLE;
-        Serial.println("RadioManager: BLE schedule inactive, staying idle");
+        DEBUG_PRINTLN("RadioManager: BLE schedule inactive, staying idle");
     }
 }
 
 void RadioManager::transitionToIdle() {
-    Serial.println("RadioManager: Transitioning to IDLE");
+    DEBUG_PRINTLN("RadioManager: Transitioning to IDLE");
 
     if (currentMode == Mode::WIFI) {
         stopWifi();
@@ -121,7 +121,7 @@ void RadioManager::checkBleSchedules() {
     // During boot grace period, keep BLE on regardless of schedules
     if (isInBootGracePeriod()) {
         if (currentMode == Mode::IDLE) {
-            Serial.println("RadioManager: Boot grace period - starting BLE");
+            DEBUG_PRINTLN("RadioManager: Boot grace period - starting BLE");
             startBle();
             currentMode = Mode::BLE;
         }
@@ -132,11 +132,11 @@ void RadioManager::checkBleSchedules() {
 
     // Don't start BLE while WiFi is running
     if (shouldBeActive && currentMode == Mode::IDLE) {
-        Serial.println("RadioManager: BLE schedule active - starting BLE");
+        DEBUG_PRINTLN("RadioManager: BLE schedule active - starting BLE");
         startBle();
         currentMode = Mode::BLE;
     } else if (!shouldBeActive && currentMode == Mode::BLE) {
-        Serial.println("RadioManager: BLE schedule inactive - stopping BLE");
+        DEBUG_PRINTLN("RadioManager: BLE schedule inactive - stopping BLE");
         stopBle();
         currentMode = Mode::IDLE;
     }
@@ -145,12 +145,12 @@ void RadioManager::checkBleSchedules() {
 void RadioManager::startWifi() {
     wifiManager.start();
     // WiFi is now running - ready for future OTA endpoint
-    Serial.println("RadioManager: WiFi started (ready for OTA)");
+    DEBUG_PRINTLN("RadioManager: WiFi started (ready for OTA)");
 }
 
 void RadioManager::stopWifi() {
     wifiManager.stop();
-    Serial.println("RadioManager: WiFi stopped");
+    DEBUG_PRINTLN("RadioManager: WiFi stopped");
 }
 
 void RadioManager::startBle() {
@@ -205,10 +205,10 @@ void RadioManager::setAntenna(AntennaType type) {
     // PIN_RF_PORT LOW = onboard PCB antenna
     if (type == AntennaType::ROD) {
         digitalWrite(PIN_RF_PORT, HIGH);
-        Serial.println("RadioManager: External rod antenna selected");
+        DEBUG_PRINTLN("RadioManager: External rod antenna selected");
     } else {
         digitalWrite(PIN_RF_PORT, LOW);
-        Serial.println("RadioManager: Onboard PCB antenna selected");
+        DEBUG_PRINTLN("RadioManager: Onboard PCB antenna selected");
     }
 #else
     (void)type;  // Unused on other targets

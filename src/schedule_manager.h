@@ -29,7 +29,7 @@ public:
 
     bool add(const T& item) {
         if (count >= MAX_COUNT) {
-            Serial.println("ScheduleManager: Max items reached");
+            DEBUG_PRINTLN("ScheduleManager: Max items reached");
             return false;
         }
 
@@ -78,7 +78,7 @@ public:
     void load(const char* filename, const char* jsonKey, DeserializeFunc deserializeItem) {
         File file = LittleFS.open(filename, "r");
         if (!file) {
-            Serial.printf("ScheduleManager: No file found: %s\n", filename);
+            DEBUG_PRINTF("ScheduleManager: No file found: %s\n", filename);
             count = 0;
             return;
         }
@@ -88,7 +88,7 @@ public:
         file.close();
 
         if (error) {
-            Serial.printf("ScheduleManager: Failed to parse %s: %s\n", filename, error.c_str());
+            DEBUG_PRINTF("ScheduleManager: Failed to parse %s: %s\n", filename, error.c_str());
             count = 0;
             return;
         }
@@ -111,7 +111,7 @@ public:
             count++;
         }
 
-        Serial.printf("ScheduleManager: Loaded %d items from %s\n", count, filename);
+        DEBUG_PRINTF("ScheduleManager: Loaded %d items from %s\n", count, filename);
     }
 
     // Save to JSON file
@@ -129,13 +129,13 @@ public:
 
         File file = LittleFS.open(filename, "w");
         if (!file) {
-            Serial.printf("ScheduleManager: Failed to open %s for writing\n", filename);
+            DEBUG_PRINTF("ScheduleManager: Failed to open %s for writing\n", filename);
             return;
         }
 
         serializeJson(doc, file);
         file.close();
-        Serial.printf("ScheduleManager: Saved %d items to %s\n", count, filename);
+        DEBUG_PRINTF("ScheduleManager: Saved %d items to %s\n", count, filename);
     }
 
     // Convert to JSON array string (for API responses)
