@@ -208,20 +208,6 @@ void loop() {
         display.handleButton(event);
     }
 
-    // Check for WiFi toggle request from display (user held button on Connectivity screen)
-    if (display.shouldToggleWifi()) {
-        display.clearWifiToggleRequest();
-        if (radioManager.isWifiActive()) {
-            DEBUG_PRINTLN("User requested WiFi stop");
-            radioManager.transitionToBle();
-        } else {
-            DEBUG_PRINTLN("User requested WiFi start");
-            radioManager.transitionToWifi();
-        }
-        // Force immediate status update so display shows new WiFi state
-        lastStatusUpdate = 0;
-    }
-
     // Check for manual feed request from display (user held button on Overview screen)
     // Manual feed always works - user is explicitly overriding any battery restrictions
     if (display.shouldStartFeedCountdown()) {

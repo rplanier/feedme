@@ -13,13 +13,12 @@
 // Display type for 2.9" Waveshare V2 (296x128, Rev2.1) - SSD1680 controller
 typedef GxEPD2_BW<GxEPD2_290_BS, GxEPD2_290_BS::HEIGHT> EPD_Class;
 
-// UI Screen states (simplified - read-only except WiFi toggle)
+// UI Screen states (read-only, configuration via BLE app)
 enum class Screen {
     OVERVIEW,       // Time, battery, next feed, warnings
-    CONNECTIVITY,   // WiFi/BLE status, QR code, toggle WiFi
     FEED_SCHEDULES, // Read-only feed schedule list
     BLE_SCHEDULES,  // Read-only BLE schedule list
-    ABOUT           // Version, device ID
+    ABOUT           // Version, device info, settings summary
 };
 
 // Status data passed to display
@@ -94,9 +93,6 @@ public:
     // Update status data
     void setStatus(const StatusData& newStatus);
 
-    // Request WiFi toggle (called from button handler, returns true if toggled)
-    bool shouldToggleWifi() const { return wifiToggleRequested; }
-    void clearWifiToggleRequest() { wifiToggleRequested = false; }
 
     // Feed countdown warning display
     void showFeedCountdown(int secondsRemaining);  // Show countdown warning
@@ -120,7 +116,6 @@ private:
 
     Screen currentScreen = Screen::OVERVIEW;
     bool needsRedraw = true;
-    bool wifiToggleRequested = false;
     bool feedCountdownRequested = false;
     bool statusUpdateNeeded = false;
 
@@ -142,7 +137,6 @@ private:
     void drawOverviewScreen();
     void drawFeedSchedulesScreen();
     void drawBleSchedulesScreen();
-    void drawConnectivityScreen();
     void drawAboutScreen();
 
     // Helper drawing methods

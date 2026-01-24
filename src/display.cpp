@@ -10,7 +10,7 @@
 Display display;
 
 // Number of screens for circular navigation
-constexpr int NUM_SCREENS = 5;
+constexpr int NUM_SCREENS = 4;
 
 void Display::begin() {
     // Initialize SPI with custom pins (required for ESP32-C6 with non-default pins)
@@ -99,9 +99,6 @@ void Display::doFullRefresh() {
             case Screen::BLE_SCHEDULES:
                 drawBleSchedulesScreen();
                 break;
-            case Screen::CONNECTIVITY:
-                drawConnectivityScreen();
-                break;
             case Screen::ABOUT:
                 drawAboutScreen();
                 break;
@@ -165,9 +162,6 @@ void Display::doPartialRefresh() {
                 case Screen::BLE_SCHEDULES:
                     drawBleSchedulesScreen();
                     break;
-                case Screen::CONNECTIVITY:
-                    drawConnectivityScreen();
-                    break;
                 case Screen::ABOUT:
                     drawAboutScreen();
                     break;
@@ -199,14 +193,6 @@ void Display::setStatus(const StatusData& newStatus) {
     // Trigger redraw if time changed - but only on Overview screen which shows time
     if (strncmp(status.currentTime, newStatus.currentTime, 5) != 0) {
         if (currentScreen == Screen::OVERVIEW) {
-            needsRedraw = true;
-            partialRefreshCount = PARTIAL_REFRESH_LIMIT;
-        }
-    }
-
-    // Trigger redraw if WiFi state changed while on Connectivity screen
-    if (status.wifiEnabled != newStatus.wifiEnabled) {
-        if (currentScreen == Screen::CONNECTIVITY) {
             needsRedraw = true;
             partialRefreshCount = PARTIAL_REFRESH_LIMIT;
         }
@@ -306,11 +292,6 @@ void Display::handleButton(ButtonEvent event) {
                         scrollMode = true;
                         needsRedraw = true;
                     }
-                } else if (currentScreen == Screen::CONNECTIVITY) {
-                    // Toggle WiFi
-                    wifiToggleRequested = true;
-                    needsRedraw = true;
-                    partialRefreshCount = PARTIAL_REFRESH_LIMIT;  // Force full refresh
                 }
                 break;
 
@@ -330,8 +311,7 @@ void Display::drawOverviewScreen() {
 
     // Status icons in header area (right side)
     drawBatteryIcon(SCREEN_WIDTH - 45, 2);
-    drawWifiIcon(SCREEN_WIDTH - 70, 2, status.wifiEnabled, status.wifiClientConnected);
-    drawBleIcon(SCREEN_WIDTH - 90, 2, status.bleEnabled, status.bleClientConnected);
+    drawBleIcon(SCREEN_WIDTH - 70, 2, status.bleEnabled, status.bleClientConnected);
 
     // Warning banner if time not synced
     if (!status.timeSynced) {
@@ -413,9 +393,9 @@ void Display::drawFeedSchedulesScreen() {
         epd.setCursor((SCREEN_WIDTH - w) / 2, 65);
         epd.print("No schedules configured");
 
-        epd.getTextBounds("Use WiFi to add", 0, 0, &x1, &y1, &w, &h);
+        epd.getTextBounds("Use FeedMe app to add", 0, 0, &x1, &y1, &w, &h);
         epd.setCursor((SCREEN_WIDTH - w) / 2, 83);
-        epd.print("Use WiFi to add");
+        epd.print("Use FeedMe app to add");
         return;
     }
 
@@ -518,52 +498,6 @@ void Display::drawFeedSchedulesScreen() {
     }
 }
 
-void Display::drawConnectivityScreen() {
-    drawHeader("Connectivity");
-
-    epd.setFont(&FreeMono9pt7b);
-    int y = 42;  // Start below 24px header + margin
-
-    // WiFi section
-    epd.setCursor(5, y);
-    epd.print("WiFi: ");
-    epd.print(status.wifiEnabled ? (status.wifiClientConnected ? "Connected" : "On") : "Off");
-
-    // BLE section (right after WiFi)
-    y += 18;
-    epd.setCursor(5, y);
-    epd.print("BLE:  ");
-    epd.print(status.bleEnabled ? (status.bleClientConnected ? "Connected" : "Advertising") : "Off");
-
-    if (status.wifiEnabled) {
-        y += 18;
-        epd.setCursor(5, y);
-        epd.print("SSID: ");
-        epd.print(status.wifiSSID);
-
-        y += 18;
-        epd.setCursor(5, y);
-        epd.print("Pass: ");
-        epd.print(status.wifiPassword);
-
-        // QR code for WiFi (if enabled)
-        if (strlen(status.wifiSSID) > 0) {
-            char wifiConfig[96];
-            snprintf(wifiConfig, sizeof(wifiConfig), "WIFI:T:WPA;S:%s;P:%s;;",
-                     status.wifiSSID, status.wifiPassword);
-            drawQRCode(211, 25, wifiConfig, 3);
-        }
-    }
-
-    // Action hint
-    epd.setCursor(5, 122);
-#if SINGLE_BUTTON_MODE
-    epd.print("Hold to toggle WiFi");
-#else
-    epd.print("Hold NEXT to toggle WiFi");
-#endif
-}
-
 void Display::drawBleSchedulesScreen() {
     drawHeader("BLE Schedules");
 
@@ -574,13 +508,17 @@ void Display::drawBleSchedulesScreen() {
         int16_t x1, y1;
         uint16_t w, h;
 
-        epd.getTextBounds("No BLE schedules", 0, 0, &x1, &y1, &w, &h);
-        epd.setCursor((SCREEN_WIDTH - w) / 2, 65);
-        epd.print("No BLE schedules");
+        epd.getTextBounds("! BLE always on !", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 55);
+        epd.print("! BLE always on !");
 
-        epd.getTextBounds("BLE always active", 0, 0, &x1, &y1, &w, &h);
-        epd.setCursor((SCREEN_WIDTH - w) / 2, 83);
-        epd.print("BLE always active");
+        epd.getTextBounds("Higher battery usage", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 73);
+        epd.print("Higher battery usage");
+
+        epd.getTextBounds("Add schedule in app", 0, 0, &x1, &y1, &w, &h);
+        epd.setCursor((SCREEN_WIDTH - w) / 2, 91);
+        epd.print("Add schedule in app");
         return;
     }
 
@@ -636,22 +574,46 @@ void Display::drawAboutScreen() {
     drawHeader("About");
 
     epd.setFont(&FreeMono9pt7b);
-    int y = 42;  // Start below 24px header + margin
+    Settings& settings = storage.getSettings();
+    char line[40];
+    int y = 44;
 
     // Version
+    snprintf(line, sizeof(line), "Version: %s", FEEDME_VERSION);
     epd.setCursor(5, y);
-    epd.print("Version: ");
-    epd.print(FEEDME_VERSION);
+    epd.print(line);
 
     // Device ID
     y += 18;
+    snprintf(line, sizeof(line), "ID: %s", storage.getDeviceId());
     epd.setCursor(5, y);
-    epd.print("Device: ");
-    epd.print(storage.getDeviceId());
+    epd.print(line);
 
-    // Footer
-    epd.setCursor(5, 122);
-    epd.print("Connect to WiFi for setup");
+    // Device Name
+    y += 18;
+    epd.setCursor(5, y);
+    if (strlen(settings.deviceName) > 0) {
+        snprintf(line, sizeof(line), "Name: %.20s", settings.deviceName);
+    } else {
+        snprintf(line, sizeof(line), "Name: FeedMe-%s", storage.getDeviceId());
+    }
+    epd.print(line);
+
+    // Battery type and detected voltage (12V vs 6V)
+    y += 18;
+    const char* battType = (settings.batteryType == BatteryType::AGM) ? "AGM" :
+                           (settings.batteryType == BatteryType::GEL) ? "GEL" : "SLA";
+    const char* battVolt = (status.batteryVoltage > BATTERY_TYPE_THRESHOLD) ? "12V" : "6V";
+    snprintf(line, sizeof(line), "Battery: %s %s", battType, battVolt);
+    epd.setCursor(5, y);
+    epd.print(line);
+
+    // Antenna
+    y += 18;
+    const char* antStr = (settings.antennaType == AntennaType::ONBOARD) ? "Onboard" : "External";
+    snprintf(line, sizeof(line), "Antenna: %s", antStr);
+    epd.setCursor(5, y);
+    epd.print(line);
 }
 
 // =============================================================================
