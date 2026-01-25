@@ -102,6 +102,15 @@ public:
     // BLE pairing PIN display
     void showPairingPin(const char* pin);           // Show pairing PIN prominently
     void hidePairingPin();                          // Clear PIN and return to normal display
+    bool isShowingPairingPin() const { return showingPairingPin; }
+
+    // Deferred PIN display (for calling from BLE callbacks)
+    void requestShowPairingPin(const char* pin);    // Schedule PIN display for main loop
+    void requestHidePairingPin();                   // Schedule PIN hide for main loop
+    bool hasPendingPinDisplay() const { return pendingPinDisplay; }
+    bool hasPendingPinHide() const { return pendingPinHide; }
+    void processPendingPinDisplay();                // Call from main loop to actually show PIN
+    void processPendingPinHide();                   // Call from main loop to actually hide PIN
 
     // Request manual feed countdown (called from button handler on Overview screen)
     bool shouldStartFeedCountdown() const { return feedCountdownRequested; }
@@ -118,6 +127,10 @@ private:
     bool needsRedraw = true;
     bool feedCountdownRequested = false;
     bool statusUpdateNeeded = false;
+    bool showingPairingPin = false;
+    bool pendingPinDisplay = false;
+    bool pendingPinHide = false;
+    char pendingPin[8] = "";
 
     // Screensaver state
     bool screensaverActive = false;

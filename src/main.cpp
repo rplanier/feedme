@@ -12,6 +12,7 @@
 #include "rtc_manager.h"
 #include "sun_calc.h"
 #include "time_format.h"
+#include "light_sleep_manager.h"
 
 // =============================================================================
 // State tracking
@@ -112,6 +113,10 @@ void setup() {
     DEBUG_PRINTLN("Initializing motor...");
     motor.begin();
 
+    // Initialize light sleep manager
+    DEBUG_PRINTLN("Initializing light sleep manager...");
+    lightSleepManager.begin();
+
     // Initialize radio manager (handles both WiFi and BLE)
     DEBUG_PRINTLN("Initializing radio...");
     radioManager.begin(storage.getDeviceId());
@@ -132,6 +137,9 @@ void setup() {
         case ESP_SLEEP_WAKEUP_EXT1:
             DEBUG_PRINTLN("Woke from button press");
             updateActivityTimer();
+            lightSleepManager.resetActivityTimer();
+            // Enable BLE for user interaction
+            radioManager.transitionToBle();
             break;
 
         default:
@@ -195,6 +203,7 @@ void loop() {
         if (event == ButtonEvent::NONE) break;
 
         updateActivityTimer();
+        lightSleepManager.resetActivityTimer();
         // Debug: log button events
         if (event == ButtonEvent::NEXT_PRESS) {
             DEBUG_PRINTLN("Button: NEXT_PRESS");
@@ -323,6 +332,11 @@ void loop() {
 
     }
 
+    // Process any pending PIN display requests (from BLE pairing)
+    // This must be done in main loop since e-paper refresh blocks for several seconds
+    display.processPendingPinDisplay();
+    display.processPendingPinHide();
+
     // Update display (e-ink updates only when needed)
     display.update();
 
@@ -335,6 +349,7 @@ void loop() {
         ButtonEvent event = buttons.getEvent();
         if (event == ButtonEvent::NONE) break;
         updateActivityTimer();
+        lightSleepManager.resetActivityTimer();
         display.handleButton(event);
     }
 
@@ -362,26 +377,50 @@ void handleSleepTimeout() {
         return;
     }
 
-    // Don't sleep if WiFi or BLE is running
-    if (radioManager.getMode() != RadioManager::Mode::IDLE) {
+    // Don't sleep if BLE client is connected (app is actively communicating)
+    if (radioManager.isBleClientConnected()) {
+        lightSleepManager.resetActivityTimer();
         return;
     }
 
     Settings& settings = storage.getSettings();
-    uint16_t timeoutSeconds = settings.getSleepTimeoutSeconds();
+    uint32_t timeoutMs = settings.getInactivityTimeoutMs();
 
-    // If timeout is disabled (0), never sleep
-    if (timeoutSeconds == 0) {
+    // If timeout is disabled (0), never enter power-saving sleep
+    if (timeoutMs == 0) {
         return;
     }
 
-    uint32_t now = millis();
-    uint32_t inactiveMs = now - lastActivityTime;
-    uint32_t timeoutMs = timeoutSeconds * 1000UL;
+    // Check if inactivity timeout has elapsed
+    if (!lightSleepManager.hasTimedOut(timeoutMs)) {
+        return;
+    }
 
-    // Check if we've exceeded the timeout
-    if (inactiveMs >= timeoutMs) {
-        // E-ink display persists without power - enter deep sleep
+    // Determine sleep behavior based on BLE schedules
+    bool hasBleSchedules = storage.getBleScheduleCount() > 0;
+    bool inBleWindow = storage.shouldBleBeActive();
+
+    if (!hasBleSchedules) {
+        // NO BLE schedules configured: Light sleep with BLE advertising always
+        // This allows the device to be discovered at any time while conserving power
+        if (radioManager.getMode() != RadioManager::Mode::BLE) {
+            radioManager.transitionToBle();
+        }
+        lightSleepManager.enableLightSleepWithBle();
+        DEBUG_PRINTLN("Sleep: Light sleep with BLE (no schedules)");
+    } else if (inBleWindow) {
+        // WITHIN BLE window: Light sleep with BLE advertising
+        if (radioManager.getMode() != RadioManager::Mode::BLE) {
+            radioManager.transitionToBle();
+        }
+        lightSleepManager.enableLightSleepWithBle();
+        DEBUG_PRINTLN("Sleep: Light sleep with BLE (in window)");
+    } else {
+        // OUTSIDE BLE window: Deep sleep for maximum power savings
+        // Device will wake at next scheduled event (feed or BLE window)
+        lightSleepManager.disableLightSleep();
+        radioManager.transitionToIdle();
+        DEBUG_PRINTLN("Sleep: Entering deep sleep (outside BLE window)");
         enterDeepSleep();
     }
 }

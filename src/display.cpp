@@ -65,6 +65,9 @@ void Display::begin() {
 }
 
 void Display::update() {
+    // Don't update normal display while showing pairing PIN
+    if (showingPairingPin) return;
+
     if (!needsRedraw) return;
     needsRedraw = false;
 
@@ -863,6 +866,8 @@ void Display::showFeedCancelled() {
 // =============================================================================
 
 void Display::showPairingPin(const char* pin) {
+    showingPairingPin = true;  // Prevent normal display updates while PIN is shown
+
     epd.setFullWindow();
     epd.firstPage();
     do {
@@ -928,9 +933,39 @@ void Display::showPairingPin(const char* pin) {
 }
 
 void Display::hidePairingPin() {
+    showingPairingPin = false;  // Allow normal display updates again
+    pendingPinDisplay = false;  // Clear any pending request
+    pendingPin[0] = '\0';
     // Return to normal display by forcing a full refresh of the current screen
     forceFullRefresh();
     DEBUG_PRINTLN("Display: Hiding pairing PIN, returning to normal display");
+}
+
+void Display::requestShowPairingPin(const char* pin) {
+    // Store PIN for display in main loop (safe to call from BLE callback)
+    strlcpy(pendingPin, pin, sizeof(pendingPin));
+    pendingPinDisplay = true;
+    DEBUG_PRINTF("Display: PIN display requested: %s (will show in main loop)\n", pin);
+}
+
+void Display::processPendingPinDisplay() {
+    if (!pendingPinDisplay) return;
+
+    pendingPinDisplay = false;
+    showPairingPin(pendingPin);
+}
+
+void Display::requestHidePairingPin() {
+    // Schedule PIN hide for main loop (safe to call from BLE callback)
+    pendingPinHide = true;
+    DEBUG_PRINTLN("Display: PIN hide requested (will hide in main loop)");
+}
+
+void Display::processPendingPinHide() {
+    if (!pendingPinHide) return;
+
+    pendingPinHide = false;
+    hidePairingPin();
 }
 
 // =============================================================================
@@ -942,6 +977,11 @@ constexpr uint32_t SCREENSAVER_TIMEOUT_MS = 60 * 1000;  // 60 seconds
 void Display::checkScreensaver() {
     if (screensaverActive) {
         return;  // Already in screensaver mode
+    }
+
+    // Don't activate screensaver while showing pairing PIN
+    if (showingPairingPin) {
+        return;
     }
 
     uint32_t now = millis();
