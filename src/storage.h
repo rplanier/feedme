@@ -107,6 +107,7 @@ struct Settings {
     float latitude;                 // GPS latitude for sunrise/sunset calculation
     float longitude;                // GPS longitude for sunrise/sunset calculation
     bool locationSet;               // True if location has been set by user
+    uint8_t inactivityTimeoutMin;   // Inactivity timeout in minutes (3-60, 0 = never)
 
     uint16_t getSleepTimeoutSeconds() const {
         return ::getSleepTimeoutSeconds(sleepTimeout);
@@ -122,6 +123,12 @@ struct Settings {
             case SleepTimeout::TIMEOUT_NEVER: return "Never";
             default: return "30 sec";
         }
+    }
+
+    // Get inactivity timeout in milliseconds (0 = never)
+    uint32_t getInactivityTimeoutMs() const {
+        if (inactivityTimeoutMin == INACTIVITY_NEVER) return 0;
+        return (uint32_t)inactivityTimeoutMin * 60 * 1000;
     }
 };
 

@@ -145,6 +145,7 @@ void Storage::initDefaultSettings() {
     settings.latitude = 0.0f;
     settings.longitude = 0.0f;
     settings.locationSet = false;
+    settings.inactivityTimeoutMin = DEFAULT_INACTIVITY_TIMEOUT_MIN;
 }
 
 void Storage::loadSettings() {
@@ -157,6 +158,7 @@ void Storage::loadSettings() {
     settings.latitude = prefs.getFloat(PREF_LATITUDE, 0.0f);
     settings.longitude = prefs.getFloat(PREF_LONGITUDE, 0.0f);
     settings.locationSet = prefs.getBool(PREF_LOCATION_SET, false);
+    settings.inactivityTimeoutMin = prefs.getUChar("inactTmout", DEFAULT_INACTIVITY_TIMEOUT_MIN);
     strncpy(settings.deviceId, deviceId, 5);
 
     // Load device name (empty string = use default "FeedMe-XXXX")
@@ -182,6 +184,7 @@ void Storage::saveSettings() {
     prefs.putFloat(PREF_LATITUDE, settings.latitude);
     prefs.putFloat(PREF_LONGITUDE, settings.longitude);
     prefs.putBool(PREF_LOCATION_SET, settings.locationSet);
+    prefs.putUChar("inactTmout", settings.inactivityTimeoutMin);
     prefs.putString("deviceName", settings.deviceName);
     DEBUG_PRINTLN("Storage: Settings saved");
 }

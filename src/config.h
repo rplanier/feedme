@@ -202,7 +202,7 @@ constexpr bool MOTOR_INVERTED = false;
 // Battery Settings
 // =============================================================================
 
-// Sleep/display timeout options
+// Sleep/display timeout options (for e-paper display power saving)
 enum class SleepTimeout : uint8_t {
     TIMEOUT_15S = 15,
     TIMEOUT_30S = 30,
@@ -226,6 +226,17 @@ inline uint16_t getSleepTimeoutSeconds(SleepTimeout timeout) {
         default: return 30;
     }
 }
+
+// =============================================================================
+// Inactivity Timeout Settings (for BLE light sleep power optimization)
+// =============================================================================
+// After this timeout with no BLE activity, device enters light sleep with BLE
+// advertising (low power) or deep sleep (outside BLE windows)
+
+constexpr uint8_t INACTIVITY_MIN_MINUTES = 3;      // Minimum timeout (minutes)
+constexpr uint8_t INACTIVITY_MAX_MINUTES = 60;     // Maximum timeout (minutes)
+constexpr uint8_t DEFAULT_INACTIVITY_TIMEOUT_MIN = 5;  // Default: 5 minutes
+constexpr uint8_t INACTIVITY_NEVER = 0;            // 0 = never enter light sleep
 
 // Voltage divider ratio: theoretical 100K/22K = 5.545
 // Calibrated based on actual measurements (accounts for resistor tolerance and ADC error)
