@@ -6,6 +6,7 @@
 #include "display.h"
 #include "time_format.h"
 #include "radio_manager.h"
+#include "light_sleep_manager.h"
 #include <ArduinoJson.h>
 #include <esp_random.h>
 
@@ -21,6 +22,9 @@ BLEManager bleManager;
 void ServerCallbacks::onConnect(BLEServer* pServer) {
     manager->clientConnected = true;
     manager->resetSession();  // Fresh session on each connection
+
+    // Reset activity timer - keep device awake while client is connected
+    lightSleepManager.resetActivityTimer();
 
     uint16_t connId = pServer->getConnId();
     DEBUG_PRINTF("BLE: Client connected (conn_id: %d)\n", connId);
@@ -79,6 +83,9 @@ void DeviceInfoCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 // =============================================================================
 
 void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
+    // Reset activity timer on BLE interaction
+    lightSleepManager.resetActivityTimer();
+
     String value = pCharacteristic->getValue();
     if (value.length() == 0) {
         manager->notifyAuth(false, PIN_MAX_ATTEMPTS - storage.getFailedPinAttempts());
@@ -109,6 +116,18 @@ void AuthCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         uint32_t remaining = (lockoutEnd - millis()) / 1000;
         manager->notifyAuth(false, 0, remaining);
         DEBUG_PRINTF("BLE: Auth blocked - locked out for %d seconds\n", remaining);
+        return;
+    }
+
+    // Check for unpair command
+    if (doc["unpair"] | false) {
+        if (strlen(manager->getSession().clientAddress) > 0) {
+            storage.removePairedDevice(manager->getSession().clientAddress);
+            DEBUG_PRINTF("BLE: Device unpaired: %s\n", manager->getSession().clientAddress);
+        }
+        manager->getSession().authenticated = false;
+        manager->getSession().isPairedDevice = false;
+        manager->notifyAuth(false, PIN_MAX_ATTEMPTS);
         return;
     }
 
@@ -250,6 +269,7 @@ void SettingsCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     doc["latitude"] = settings.latitude;
     doc["longitude"] = settings.longitude;
     doc["locationSet"] = settings.locationSet;
+    doc["inactivityTimeoutMin"] = settings.inactivityTimeoutMin;
 
     String json;
     serializeJson(doc, json);
@@ -261,6 +281,9 @@ void SettingsCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 }
 
 void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
+    // Reset activity timer on BLE interaction
+    lightSleepManager.resetActivityTimer();
+
     if (storage.isPinSet() && !manager->getSession().authenticated) {
         DEBUG_PRINTLN("BLE: Settings write denied - not authenticated");
         return;
@@ -334,6 +357,17 @@ void SettingsCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         changed = true;
     }
 
+    if (doc["inactivityTimeoutMin"].is<int>()) {
+        uint8_t timeout = doc["inactivityTimeoutMin"];
+        // Valid range: 0 (never) or 3-60 minutes
+        if (timeout == INACTIVITY_NEVER ||
+            (timeout >= INACTIVITY_MIN_MINUTES && timeout <= INACTIVITY_MAX_MINUTES)) {
+            settings.inactivityTimeoutMin = timeout;
+            changed = true;
+            DEBUG_PRINTF("BLE: Inactivity timeout set to %d min\n", timeout);
+        }
+    }
+
     if (changed) {
         storage.saveSettings();
         DEBUG_PRINTLN("BLE: Settings updated");
@@ -385,6 +419,9 @@ void FeedSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 }
 
 void FeedSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
+    // Reset activity timer on BLE interaction
+    lightSleepManager.resetActivityTimer();
+
     if (storage.isPinSet() && !manager->getSession().authenticated) {
         DEBUG_PRINTLN("BLE: Feed Schedules write denied - not authenticated");
         return;
@@ -414,6 +451,9 @@ void FeedSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 // =============================================================================
 
 void FeedCmdCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
+    // Reset activity timer on BLE interaction
+    lightSleepManager.resetActivityTimer();
+
     DEBUG_PRINTLN("BLE: Feed command received");
 
     if (storage.isPinSet() && !manager->getSession().authenticated) {
@@ -430,6 +470,17 @@ void FeedCmdCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
         if (value.charAt(0) == '{') {
             JsonDocument doc;
             if (!deserializeJson(doc, value)) {
+                // Check for factory reset command
+                if (doc["factoryReset"] | false) {
+                    DEBUG_PRINTLN("BLE: Factory reset command received");
+                    storage.resetToDefaults();
+                    storage.clearAllPairedDevices();
+                    rtcManager.setTimeSynced(false);
+                    DEBUG_PRINTLN("BLE: Factory reset complete - rebooting in 500ms");
+                    delay(500);  // Give time for BLE response
+                    ESP.restart();
+                    return;
+                }
                 duration = doc["duration"] | 0;
             }
         } else {
@@ -488,6 +539,9 @@ void HistoryCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 // =============================================================================
 
 void TimeSyncCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
+    // Reset activity timer on BLE interaction
+    lightSleepManager.resetActivityTimer();
+
     if (storage.isPinSet() && !manager->getSession().authenticated) {
         DEBUG_PRINTLN("BLE: Time sync denied - not authenticated");
         return;
@@ -627,6 +681,9 @@ void BleSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 }
 
 void BleSchedulesCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
+    // Reset activity timer on BLE interaction
+    lightSleepManager.resetActivityTimer();
+
     if (storage.isPinSet() && !manager->getSession().authenticated) {
         DEBUG_PRINTLN("BLE: BLE Schedules write denied - not authenticated");
         return;
@@ -922,16 +979,17 @@ void BLEManager::generatePairingPin() {
 
     DEBUG_PRINTF("BLE: Generated pairing PIN: %s\n", session.generatedPin);
 
-    // Display PIN on e-paper
-    display.showPairingPin(session.generatedPin);
+    // Request PIN display (deferred to main loop to avoid blocking BLE callback)
+    // E-paper refresh takes several seconds and can cause issues in BLE callbacks
+    display.requestShowPairingPin(session.generatedPin);
 }
 
 void BLEManager::clearPairingDisplay() {
     if (strlen(session.generatedPin) > 0) {
         session.generatedPin[0] = '\0';
-        // Return display to normal
-        display.hidePairingPin();
-        DEBUG_PRINTLN("BLE: Pairing PIN display cleared");
+        // Return display to normal (deferred to main loop to avoid blocking BLE callback)
+        display.requestHidePairingPin();
+        DEBUG_PRINTLN("BLE: Pairing PIN display clear requested");
     }
 }
 
