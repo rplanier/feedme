@@ -77,6 +77,35 @@ void DeviceInfoCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 }
 
 // =============================================================================
+// Public Info Characteristic (Read - no auth required)
+// JSON: { name, version, id, configured }
+// =============================================================================
+
+void PublicInfoCallbacks::onRead(BLECharacteristic* pCharacteristic) {
+    Settings& settings = storage.getSettings();
+    JsonDocument doc;
+
+    // Return custom name or fallback to "FeedMe-XXXX"
+    if (settings.deviceName[0] != '\0') {
+        doc["name"] = settings.deviceName;
+    } else {
+        char fallback[38];
+        snprintf(fallback, sizeof(fallback), "FeedMe-%s", storage.getDeviceId());
+        doc["name"] = fallback;
+    }
+
+    doc["version"] = FEEDME_VERSION;
+    doc["id"] = storage.getDeviceId();
+    doc["configured"] = storage.getPairedDeviceCount() > 0;
+
+    String json;
+    serializeJson(doc, json);
+    pCharacteristic->setValue(json.c_str());
+
+    DEBUG_PRINTF("BLE: PublicInfo read: %s\n", json.c_str());
+}
+
+// =============================================================================
 // Auth Characteristic (Write/Notify - PIN validation)
 // Write: { "pin": "1234" }
 // Notify: { "success": true/false, "attemptsRemaining": N, "lockoutSeconds": N }
@@ -869,6 +898,13 @@ void BLEManager::begin(const char* deviceId) {
     );
     pBleSchedulesChar->setCallbacks(new BleSchedulesCallbacks(this));
 
+    // Public Info (Read) - always accessible, no auth required
+    pPublicInfoChar = pService->createCharacteristic(
+        FEEDME_PUBLIC_INFO_UUID,
+        BLECharacteristic::PROPERTY_READ
+    );
+    pPublicInfoChar->setCallbacks(new PublicInfoCallbacks(this));
+
     // Start the service
     pService->start();
 
@@ -938,6 +974,7 @@ void BLEManager::deinit() {
         pWifiOtaChar = nullptr;
         pSetPinChar = nullptr;
         pBleSchedulesChar = nullptr;
+        pPublicInfoChar = nullptr;
         DEBUG_PRINTLN("BLE: Deinitialized");
     }
 }

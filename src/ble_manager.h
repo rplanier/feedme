@@ -27,6 +27,7 @@
 #define FEEDME_WIFI_OTA_UUID       "f33d0018-1234-5678-9abc-def012345678"  // Write: enable WiFi for OTA
 #define FEEDME_SET_PIN_UUID        "f33d0019-1234-5678-9abc-def012345678"  // Write: change PIN
 #define FEEDME_BLE_SCHEDULES_UUID  "f33d001a-1234-5678-9abc-def012345678"  // Read/Write: BLE advertising schedules
+#define FEEDME_PUBLIC_INFO_UUID    "f33d001b-1234-5678-9abc-def012345678"  // Read: name, version, id (no auth)
 
 // =============================================================================
 // BLE Session State
@@ -137,6 +138,7 @@ private:
     BLECharacteristic* pWifiOtaChar = nullptr;
     BLECharacteristic* pSetPinChar = nullptr;
     BLECharacteristic* pBleSchedulesChar = nullptr;
+    BLECharacteristic* pPublicInfoChar = nullptr;
 
     // Callback classes need access to private members
     friend class ServerCallbacks;
@@ -151,6 +153,7 @@ private:
     friend class WifiOtaCallbacks;
     friend class SetPinCallbacks;
     friend class BleSchedulesCallbacks;
+    friend class PublicInfoCallbacks;
 };
 
 // =============================================================================
@@ -265,6 +268,16 @@ public:
     BleSchedulesCallbacks(BLEManager* manager) : manager(manager) {}
     void onRead(BLECharacteristic* pCharacteristic) override;
     void onWrite(BLECharacteristic* pCharacteristic) override;
+private:
+    BLEManager* manager;
+};
+
+// Public Info - always readable (no auth required)
+// Returns device name, firmware version, device ID, and configured status
+class PublicInfoCallbacks : public BLECharacteristicCallbacks {
+public:
+    PublicInfoCallbacks(BLEManager* manager) : manager(manager) {}
+    void onRead(BLECharacteristic* pCharacteristic) override;
 private:
     BLEManager* manager;
 };
