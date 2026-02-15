@@ -141,7 +141,7 @@ void Storage::initDefaultSettings() {
     settings.timezoneOffset = 0;  // UTC (deprecated, use posixTz)
     settings.posixTz[0] = '\0';   // Empty = use timezoneOffset fallback
     settings.batteryType = BatteryType::SLA;  // Default to SLA
-    settings.antennaType = DEFAULT_ANTENNA_TYPE;  // Default to rod antenna
+    settings.antennaType = DEFAULT_ANTENNA_TYPE;  // Default to onboard antenna
     settings.latitude = 0.0f;
     settings.longitude = 0.0f;
     settings.locationSet = false;

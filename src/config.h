@@ -15,7 +15,7 @@ constexpr char FEEDME_VERSION[] = "0.1b";
 // IMPORTANT: Serial debug must be disabled because GPIO16 (D6) is used for the
 // button input, but GPIO16 is also U0TXD. Serial output conflicts with the button.
 // Set to 0 to disable, 1 to enable (only for debugging with different pin config)
-#define SERIAL_DEBUG 0
+#define SERIAL_DEBUG 1
 
 #if SERIAL_DEBUG
     #define DEBUG_PRINT(...) Serial.print(__VA_ARGS__)
@@ -131,8 +131,8 @@ constexpr uint8_t PIN_SOLAR_ADC = 0;      // D0 - SOLAR_SENSE (ADC capable)
 constexpr uint8_t PIN_RF_SW_PWR = 3;      // RF switch power pin
 constexpr uint8_t PIN_RF_PORT = 14;       // RF port select pin
 
-// Default antenna type (can be changed at runtime via app)
-constexpr AntennaType DEFAULT_ANTENNA_TYPE = AntennaType::ROD;
+// Default antenna type - onboard is safer default (rod antenna requires external connection)
+constexpr AntennaType DEFAULT_ANTENNA_TYPE = AntennaType::ONBOARD;
 
 #elif defined(TARGET_ESP32C3_SUPERMINI)
 // -----------------------------------------------------------------------------
