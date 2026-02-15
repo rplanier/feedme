@@ -79,6 +79,10 @@ public:
     bool isRunning() const { return running; }
     bool isClientConnected() const { return clientConnected; }
     bool hasWakeRequest() const { return wakeRequested.load(); }
+
+    // Health check - verify advertising is actually running and restart if needed
+    bool isActuallyAdvertising() const;
+    bool ensureAdvertising();  // Returns true if advertising was restarted
     void clearWakeRequest() { wakeRequested.store(false); }
 
     // WiFi OTA request (written by iOS app to enable WiFi)

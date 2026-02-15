@@ -20,8 +20,10 @@
 uint32_t lastActivityTime = 0;          // Last button press or interaction
 uint32_t lastStatusUpdate = 0;
 uint32_t lastScheduleCheck = 0;
+uint32_t lastStateLog = 0;              // Last radio state log
 constexpr uint32_t STATUS_UPDATE_INTERVAL = 1000;
 constexpr uint32_t SCHEDULE_CHECK_INTERVAL = 10000;  // Check schedules every 10 seconds
+constexpr uint32_t STATE_LOG_INTERVAL = 30000;       // Log radio state every 30 seconds
 
 // Track which schedules have run today to prevent double-execution
 uint8_t lastExecutedScheduleDay = 0;
@@ -294,6 +296,24 @@ void loop() {
     // Update radio manager (handles BLE wake requests, WiFi idle timeout, etc.)
     radioManager.update();
 
+    // Periodic state logging and BLE health check
+    if (now - lastStateLog >= STATE_LOG_INTERVAL) {
+        lastStateLog = now;
+
+        // Log current radio state
+        DEBUG_PRINTF("State: mode=%s, bleRunning=%d, bleAdvertising=%d, lightSleep=%d, inactivity=%lums\n",
+            radioManager.getModeName(),
+            radioManager.isBleActive(),
+            radioManager.isBleActive() ? bleManager.isActuallyAdvertising() : 0,
+            lightSleepManager.isLightSleepEnabled(),
+            lightSleepManager.getTimeSinceLastActivity());
+
+        // BLE health check - restart advertising if it stopped unexpectedly
+        if (radioManager.ensureBleHealthy()) {
+            DEBUG_PRINTLN("WARNING: BLE advertising was restarted by health check!");
+        }
+    }
+
     // Update display status periodically, or immediately if requested (e.g., after settings change)
     if (now - lastStatusUpdate >= STATUS_UPDATE_INTERVAL || display.needsStatusUpdate()) {
         lastStatusUpdate = now;
@@ -372,14 +392,18 @@ void updateActivityTimer() {
 // =============================================================================
 
 void handleSleepTimeout() {
+    static bool sleepLoggedOnce = false;  // Prevent spam logging
+
     // Don't sleep if motor is running
     if (motor.isRunning()) {
+        sleepLoggedOnce = false;  // Reset so we log when we enter sleep again
         return;
     }
 
     // Don't sleep if BLE client is connected (app is actively communicating)
     if (radioManager.isBleClientConnected()) {
         lightSleepManager.resetActivityTimer();
+        sleepLoggedOnce = false;  // Reset so we log when we enter sleep again
         return;
     }
 
@@ -393,6 +417,7 @@ void handleSleepTimeout() {
 
     // Check if inactivity timeout has elapsed
     if (!lightSleepManager.hasTimedOut(timeoutMs)) {
+        sleepLoggedOnce = false;  // Reset so we log when we enter sleep again
         return;
     }
 
@@ -406,15 +431,30 @@ void handleSleepTimeout() {
         if (radioManager.getMode() != RadioManager::Mode::BLE) {
             radioManager.transitionToBle();
         }
+
+        // Check BLE state before enabling light sleep
+        if (!sleepLoggedOnce) {
+            DEBUG_PRINTF("Sleep: Entering light sleep - BLE advertising=%d\n",
+                bleManager.isActuallyAdvertising());
+        }
+
         lightSleepManager.enableLightSleepWithBle();
-        DEBUG_PRINTLN("Sleep: Light sleep with BLE (no schedules)");
+
+        if (!sleepLoggedOnce) {
+            DEBUG_PRINTF("Sleep: After enableLightSleep - BLE advertising=%d\n",
+                bleManager.isActuallyAdvertising());
+            sleepLoggedOnce = true;
+        }
     } else if (inBleWindow) {
         // WITHIN BLE window: Light sleep with BLE advertising
         if (radioManager.getMode() != RadioManager::Mode::BLE) {
             radioManager.transitionToBle();
         }
         lightSleepManager.enableLightSleepWithBle();
-        DEBUG_PRINTLN("Sleep: Light sleep with BLE (in window)");
+        if (!sleepLoggedOnce) {
+            DEBUG_PRINTLN("Sleep: Light sleep with BLE (in window)");
+            sleepLoggedOnce = true;
+        }
     } else {
         // OUTSIDE BLE window: Deep sleep for maximum power savings
         // Device will wake at next scheduled event (feed or BLE window)

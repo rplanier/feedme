@@ -30,6 +30,17 @@ public:
     Mode getMode() const { return currentMode; }
     bool isWifiActive() const { return currentMode == Mode::WIFI; }
     bool isBleActive() const { return currentMode == Mode::BLE; }
+    const char* getModeName() const {
+        switch (currentMode) {
+            case Mode::IDLE: return "IDLE";
+            case Mode::BLE: return "BLE";
+            case Mode::WIFI: return "WIFI";
+            default: return "UNKNOWN";
+        }
+    }
+
+    // BLE health check - verify advertising is running and restart if needed
+    bool ensureBleHealthy();
 
     // Convenience accessors for status display
     bool isWifiClientConnected() const;

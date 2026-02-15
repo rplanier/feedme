@@ -51,7 +51,18 @@ void ServerCallbacks::onDisconnect(BLEServer* pServer) {
 
     // Restart advertising after disconnect (if BLE should still be active)
     if (manager->isRunning()) {
+        DEBUG_PRINTLN("BLE: Restarting advertising after disconnect");
         BLEDevice::startAdvertising();
+
+        // Verify advertising actually started
+        BLEAdvertising* pAdv = BLEDevice::getAdvertising();
+        if (pAdv && pAdv->isAdvertising()) {
+            DEBUG_PRINTLN("BLE: Advertising confirmed running");
+        } else {
+            DEBUG_PRINTLN("BLE: WARNING - Advertising failed to restart!");
+        }
+    } else {
+        DEBUG_PRINTLN("BLE: Not restarting advertising (running=false)");
     }
 }
 
@@ -982,6 +993,29 @@ void BLEManager::deinit() {
 void BLEManager::update() {
     // Nothing to do in update for now
     // The callbacks handle everything asynchronously
+}
+
+bool BLEManager::isActuallyAdvertising() const {
+    if (!initialized || !running) {
+        return false;
+    }
+    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+    return pAdvertising && pAdvertising->isAdvertising();
+}
+
+bool BLEManager::ensureAdvertising() {
+    if (!initialized || !running) {
+        return false;  // Not supposed to be advertising
+    }
+
+    // Check if we think we're running but advertising actually stopped
+    BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
+    if (pAdvertising && !pAdvertising->isAdvertising() && !clientConnected) {
+        DEBUG_PRINTLN("BLE: WARNING - Advertising stopped unexpectedly, restarting!");
+        BLEDevice::startAdvertising();
+        return true;  // Had to restart
+    }
+    return false;  // No restart needed
 }
 
 void BLEManager::notifyStatus() {

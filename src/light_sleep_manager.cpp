@@ -38,7 +38,13 @@ void LightSleepManager::enableLightSleepWithBle() {
         DEBUG_PRINTF("LightSleepManager: Failed to enable light sleep: %d\n", err);
     }
 #else
-    DEBUG_PRINTLN("LightSleepManager: Power management not enabled in build config");
+    // Power management not enabled - light sleep is a no-op
+    // Note: To enable, add CONFIG_PM_ENABLE=y to sdkconfig
+    static bool warnedOnce = false;
+    if (!warnedOnce) {
+        DEBUG_PRINTLN("LightSleepManager: Power management not enabled in build config");
+        warnedOnce = true;
+    }
 #endif
 }
 
@@ -65,7 +71,7 @@ void LightSleepManager::disableLightSleep() {
 
 void LightSleepManager::resetActivityTimer() {
     lastActivityTime = millis();
-    DEBUG_PRINTLN("LightSleepManager: Activity timer reset");
+    // Note: No debug logging here - this is called frequently and creates spam
 }
 
 bool LightSleepManager::hasTimedOut(uint32_t timeoutMs) const {

@@ -214,3 +214,11 @@ void RadioManager::setAntenna(AntennaType type) {
     (void)type;  // Unused on other targets
 #endif
 }
+
+bool RadioManager::ensureBleHealthy() {
+    // Only check if we're supposed to be in BLE mode
+    if (currentMode != Mode::BLE) {
+        return false;
+    }
+    return bleManager.ensureAdvertising();
+}
