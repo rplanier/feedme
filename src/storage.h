@@ -80,7 +80,8 @@ enum class FeedStatus : uint8_t {
     EXECUTED = 0,       // Feed ran successfully
     SKIPPED_BATTERY = 1, // Skipped due to low battery
     SKIPPED_RUNNING = 2, // Skipped because motor already running
-    SKIPPED_RECENT = 3   // Skipped due to recent feed (overlap protection)
+    SKIPPED_RECENT = 3,  // Skipped due to recent feed (overlap protection)
+    STALLED = 4          // Started, then cut short by stall detection (duration = actual run)
 };
 
 struct FeedEvent {
@@ -189,6 +190,11 @@ public:
 
     // Feed history
     void logFeedEvent(uint8_t duration, bool manual, const char* scheduleName, FeedStatus status = FeedStatus::EXECUTED);
+
+    // Feeds are logged when they start (so a reboot mid-feed still leaves a
+    // record).  Call this when the motor stops to overwrite the newest entry
+    // with what actually happened: the real run time, and the outcome.
+    void updateLastFeedOutcome(uint8_t actualDurationSec, FeedStatus status);
     int getFeedHistoryCount() const { return feedHistoryCount; }
     const FeedEvent* getFeedEvent(int index) const;  // 0 = most recent
     String getFeedHistoryJson();
@@ -231,6 +237,7 @@ private:
     FeedEvent feedHistory[MAX_FEED_HISTORY];
     int feedHistoryCount = 0;
     int feedHistoryHead = 0;  // Index of most recent event
+    int startedFeedIndex = -1;  // Slot of the feed currently running, -1 if none
 
     void generateDeviceId();
     void loadFeedHistory();

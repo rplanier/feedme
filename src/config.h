@@ -253,6 +253,39 @@ constexpr uint8_t INACTIVITY_NEVER = 0;            // 0 = never enter light slee
 // C11's spot loading the divider.)
 constexpr float BATTERY_DIVIDER_RATIO = 4.7037f;
 
+// -----------------------------------------------------------------------------
+// Motor stall detection (see PCB Design Plan §0.5)
+// -----------------------------------------------------------------------------
+// A jammed spinner holds the motor at locked-rotor current for the full run
+// duration.  At ~8 A that is roughly 1 W in Q2 on a 12 V pack and ~2 W on a 6 V
+// pack -- survivable for seconds, not for the 30 s safety timeout.  The 30 s
+// timeout is NOT protection; it is the worst-case thermal duration.
+//
+// No current sensor exists and there is no spare GPIO for one.  But a stall
+// draws 2-3x the running current, and that extra draw sags the battery through
+// pack ESR + harness + fuse resistance -- which BATT_SENSE already measures.
+// Sample before the feed, sample during, abort on excess drop.
+//
+// CALIBRATED 2026-09-29 on the v0.1c board, production harness + 7.5 A fused
+// lead, 12 V SLA resting ~12.3 V, real motor, two 5 s feeds.  Both traces:
+//   inrush 1.98-2.08 V at 100 ms, 1.65-1.70 V at 500 ms, ~1.3 V at 1.0 s,
+//   ~1.2 V at 1.5 s, settled at 1.05-1.09 V from ~2.0 s to the end.
+// So spin-up takes ~2 s (not 200 ms) and running sag is ~1.1 V (not 0.15 V):
+// the original 0.40 V / 500 ms guess aborted every feed at 602 ms.
+//
+// Blank covers the inrush down to ~1.3 V; the limit sits ~0.7 V above running
+// sag for a tired/cold pack, while a locked rotor draws several times running
+// current and should sag well past 2 V.  NOT yet measured: a 6 V pack (absolute
+// sag should be similar since current and harness are the same), and a real
+// stall.  Set MOTOR_SAG_TRACE = true to log the curve every MOTOR_SAG_TRACE_MS
+// when re-checking either.
+constexpr float MOTOR_STALL_SAG_VOLTS = 2.0f;
+constexpr uint16_t MOTOR_STALL_BLANK_MS = 1000;   // spin-up; sag still ~1.3 V here
+constexpr bool MOTOR_SAG_TRACE = false;           // calibration aid, see above
+constexpr uint16_t MOTOR_SAG_TRACE_MS = 100;
+constexpr uint16_t MOTOR_STALL_SAMPLE_MS = 50;    // check interval during a feed
+constexpr uint8_t MOTOR_STALL_CONFIRM = 3;        // consecutive samples before abort
+
 // ADC attenuation switching for 6 V packs.
 // 12 dB gives 0-3300 mV (+-40 mV total error).  6 dB gives 0-1900 mV (+-23 mV).
 // A 6 V pack maxes at ~7.4 V charging = 1.57 V at the divider, so it fits inside

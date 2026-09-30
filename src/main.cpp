@@ -195,7 +195,17 @@ void loop() {
     // Update last feed completion time when motor stops
     if (wasMotorRunning && !motor.isRunning()) {
         lastFeedCompletedTime = millis();
-        DEBUG_PRINTLN("Feed completed - updating lastFeedCompletedTime");
+        // Round the real run time to the nearest second, but never to 0 (which
+        // means "skipped" to the app): a 5002 ms feed logs 5 s, a 600 ms stall 1 s.
+        uint8_t ranSec = (uint8_t)((motor.getLastRunMs() + 500) / 1000);
+        if (ranSec < 1) ranSec = 1;
+        // The iOS app decodes unknown status values to a fallback case since
+        // 2026-09-29, so new statuses here no longer break its history view.
+        storage.updateLastFeedOutcome(ranSec, motor.wasStalled() ? FeedStatus::STALLED
+                                                                 : FeedStatus::EXECUTED);
+        DEBUG_PRINTF("Feed completed - ran %lums, peak sag %.2fV%s\n",
+                     (unsigned long)motor.getLastRunMs(), motor.getLastSagVolts(),
+                     motor.wasStalled() ? " (STALLED)" : "");
     }
 
     // Drain ALL pending button events before refreshing display

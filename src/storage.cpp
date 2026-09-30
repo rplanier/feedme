@@ -784,6 +784,11 @@ void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleNa
     event.duration = duration;
     event.manual = manual;
     event.status = status;
+    if (status == FeedStatus::EXECUTED) {
+        // A feed is starting; remember its slot so the outcome update lands on
+        // it even if SKIPPED_* entries are logged while the motor runs.
+        startedFeedIndex = feedHistoryHead;
+    }
     if (scheduleName && scheduleName[0] != '\0') {
         strlcpy(event.scheduleName, scheduleName, sizeof(event.scheduleName));
     } else {
@@ -798,10 +803,30 @@ void Storage::logFeedEvent(uint8_t duration, bool manual, const char* scheduleNa
     if (status == FeedStatus::SKIPPED_BATTERY) statusStr = "skipped (low battery)";
     else if (status == FeedStatus::SKIPPED_RUNNING) statusStr = "skipped (motor running)";
     else if (status == FeedStatus::SKIPPED_RECENT) statusStr = "skipped (recent feed)";
+    else if (status == FeedStatus::STALLED) statusStr = "stalled";
 
     DEBUG_PRINTF("Storage: Logged feed event (duration=%ds, manual=%s, schedule=%s, status=%s)\n",
                   duration, manual ? "yes" : "no", scheduleName ? scheduleName : "", statusStr);
 
+    saveFeedHistory();
+}
+
+void Storage::updateLastFeedOutcome(uint8_t actualDurationSec, FeedStatus status) {
+    if (feedHistoryCount == 0 || startedFeedIndex < 0 || startedFeedIndex >= MAX_FEED_HISTORY) {
+        return;
+    }
+    FeedEvent& event = feedHistory[startedFeedIndex];
+    startedFeedIndex = -1;
+    if (event.status != FeedStatus::EXECUTED && event.status != FeedStatus::STALLED) {
+        return;  // slot was recycled by something else; never rewrite a skip record
+    }
+    if (event.duration == actualDurationSec && event.status == status) {
+        return;  // nothing changed, skip the flash write
+    }
+    event.duration = actualDurationSec;
+    event.status = status;
+    DEBUG_PRINTF("Storage: Updated last feed event (actual duration=%ds, %s)\n",
+                 actualDurationSec, status == FeedStatus::STALLED ? "stalled" : "executed");
     saveFeedHistory();
 }
 
