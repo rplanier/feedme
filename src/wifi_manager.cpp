@@ -125,10 +125,10 @@ void WiFiManager::setupAP() {
     delay(500);
 
     // Configure AP IP settings after AP is started
-    IPAddress localIP(192, 168, 4, 1);
-    IPAddress gateway(192, 168, 4, 1);
+    IPAddress localIP;
+    localIP.fromString(AP_IP);
     IPAddress subnet(255, 255, 255, 0);
-    WiFi.softAPConfig(localIP, gateway, subnet);
+    WiFi.softAPConfig(localIP, localIP, subnet);
 
     DEBUG_PRINTF("WiFi: AP started - SSID: %s, Pass: %s\n", ssid, password);
     DEBUG_PRINTF("WiFi: AP IP address: %s\n", WiFi.softAPIP().toString().c_str());

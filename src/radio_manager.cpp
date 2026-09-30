@@ -1,5 +1,6 @@
 #include "radio_manager.h"
 #include "config.h"
+#include "ota_server.h"
 
 RadioManager radioManager;
 
@@ -24,6 +25,9 @@ void RadioManager::begin(const char* id) {
     // Initialize BLE manager
     bleManager.begin(deviceId);
 
+    // Register OTA routes (server only listens while the AP is up)
+    otaServer.begin();
+
     DEBUG_PRINTLN("RadioManager: Initialized");
 }
 
@@ -43,9 +47,28 @@ void RadioManager::update() {
         }
     }
 
+    // Check for OTA request (app wrote 0x01 to the WiFi OTA characteristic).
+    // BLE goes down as part of this transition, so the app must already hold
+    // the WiFi credentials before it triggers.
+    if (hasWifiOtaRequest()) {
+        DEBUG_PRINTLN("RadioManager: WiFi OTA request detected");
+        clearWifiOtaRequest();
+        if (!isWifiActive()) {
+            transitionToWifi();
+        } else {
+            DEBUG_PRINTLN("RadioManager: WiFi already running, ignoring OTA request");
+        }
+    }
+
     // Update active subsystem
     if (currentMode == Mode::WIFI) {
         wifiManager.update();
+        otaServer.update();
+
+        // Don't drop the radio out from under a firmware write
+        if (otaServer.getState() == OTAServer::State::UPLOADING) {
+            return;
+        }
 
         // Check for WiFi idle timeout
         if (shouldWifiAutoStop()) {
@@ -144,11 +167,12 @@ void RadioManager::checkBleSchedules() {
 
 void RadioManager::startWifi() {
     wifiManager.start();
-    // WiFi is now running - ready for future OTA endpoint
-    DEBUG_PRINTLN("RadioManager: WiFi started (ready for OTA)");
+    otaServer.start();
+    DEBUG_PRINTLN("RadioManager: WiFi started (OTA endpoint listening)");
 }
 
 void RadioManager::stopWifi() {
+    otaServer.stop();
     wifiManager.stop();
     DEBUG_PRINTLN("RadioManager: WiFi stopped");
 }
@@ -184,6 +208,14 @@ bool RadioManager::hasBleWakeRequest() {
 
 void RadioManager::clearBleWakeRequest() {
     bleManager.clearWakeRequest();
+}
+
+bool RadioManager::hasWifiOtaRequest() {
+    return bleManager.hasWifiOtaRequest();
+}
+
+void RadioManager::clearWifiOtaRequest() {
+    bleManager.clearWifiOtaRequest();
 }
 
 bool RadioManager::shouldWifiAutoStop() const {

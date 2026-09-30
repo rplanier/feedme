@@ -248,10 +248,13 @@ private:
     BLEManager* manager;
 };
 
-// WiFi OTA - write 1 to enable WiFi for firmware update (requires auth)
+// WiFi OTA - read AP credentials, then write 1 to enable WiFi for firmware
+// update (both require auth). Credentials must be read first: starting the AP
+// tears down BLE, since WiFi and BLE share the radio.
 class WifiOtaCallbacks : public BLECharacteristicCallbacks {
 public:
     WifiOtaCallbacks(BLEManager* manager) : manager(manager) {}
+    void onRead(BLECharacteristic* pCharacteristic) override;
     void onWrite(BLECharacteristic* pCharacteristic) override;
 private:
     BLEManager* manager;

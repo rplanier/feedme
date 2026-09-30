@@ -8,6 +8,10 @@
 
 class WiFiManager {
 public:
+    // Fixed AP address. Reported over BLE before the AP is up, so it can't be
+    // read back from WiFi.softAPIP() at that point.
+    static constexpr const char* AP_IP = "192.168.4.1";
+
     void begin(const char* deviceId);
     void update();
     void start();

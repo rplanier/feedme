@@ -51,6 +51,8 @@ public:
     // Check for pending requests
     bool hasBleWakeRequest();
     void clearBleWakeRequest();
+    bool hasWifiOtaRequest();
+    void clearWifiOtaRequest();
     bool shouldWifiAutoStop() const;
 
     // WiFi credentials for display

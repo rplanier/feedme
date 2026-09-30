@@ -624,9 +624,31 @@ void TimeSyncCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
 }
 
 // =============================================================================
-// WiFi OTA Characteristic (Write - requires auth)
-// Write 1 to enable WiFi for OTA update
+// WiFi OTA Characteristic (Read/Write - requires auth)
+// Read returns the AP credentials; write 1 then starts the AP for OTA.
+// The read must happen first: starting the AP tears down BLE, so credentials
+// are unobtainable afterwards.
+// JSON (read): { "ssid": "FeedMe-XXXX", "password": "abc12345", "ip": "192.168.4.1" }
 // =============================================================================
+
+void WifiOtaCallbacks::onRead(BLECharacteristic* pCharacteristic) {
+    if (storage.isPinSet() && !manager->getSession().authenticated) {
+        pCharacteristic->setValue("{\"error\":\"unauthorized\"}");
+        DEBUG_PRINTLN("BLE: WiFi OTA read denied - not authenticated");
+        return;
+    }
+
+    JsonDocument doc;
+    doc["ssid"] = radioManager.getWifiSSID();
+    doc["password"] = radioManager.getWifiPassword();
+    doc["ip"] = WiFiManager::AP_IP;
+
+    String output;
+    serializeJson(doc, output);
+    pCharacteristic->setValue(output);
+
+    DEBUG_PRINTLN("BLE: WiFi OTA credentials read");
+}
 
 void WifiOtaCallbacks::onWrite(BLECharacteristic* pCharacteristic) {
     if (storage.isPinSet() && !manager->getSession().authenticated) {
@@ -888,10 +910,10 @@ void BLEManager::begin(const char* deviceId) {
     );
     pTimeSyncChar->setCallbacks(new TimeSyncCallbacks(this));
 
-    // WiFi OTA (Write)
+    // WiFi OTA (Read, Write) - read AP credentials before triggering
     pWifiOtaChar = pService->createCharacteristic(
         FEEDME_WIFI_OTA_UUID,
-        BLECharacteristic::PROPERTY_WRITE
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE
     );
     pWifiOtaChar->setCallbacks(new WifiOtaCallbacks(this));
 

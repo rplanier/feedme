@@ -1,0 +1,17 @@
+# OTA-capable partition table for XIAO ESP32-C6 (4 MB flash)
+#
+# Replaces huge_app.csv, which has a single app slot and therefore cannot OTA.
+# Two 1.875 MB app slots leave ~400 KB headroom over the current image.
+#
+# LittleFS holds only schedule/history JSON (no uploaded assets), so 128 KB is
+# ample. Note the filesystem offset moves relative to huge_app.csv, so the first
+# flash of this layout wipes schedules and feed history. NVS stays at 0x9000,
+# so the PIN, settings, and generated WiFi password survive.
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xe000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1E0000,
+app1,       app,  ota_1,    0x1F0000, 0x1E0000,
+spiffs,     data, spiffs,   0x3D0000, 0x20000,
+coredump,   data, coredump, 0x3F0000, 0x10000,
