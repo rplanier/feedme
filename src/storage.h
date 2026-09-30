@@ -137,7 +137,7 @@ struct Settings {
 constexpr uint8_t PIN_LENGTH = 4;                     // Generated pairing PIN is always 4 digits
 constexpr uint8_t PIN_MAX_ATTEMPTS = 5;
 constexpr uint32_t PIN_LOCKOUT_DURATION_MS = 60000;   // 1 minute lockout after max attempts
-constexpr uint8_t MAX_PAIRED_DEVICES = 8;             // Max number of remembered paired devices
+constexpr uint8_t MAX_PAIRED_DEVICES = 32;            // Remembered phones; ~100 B of NVS each, oldest evicted when full
 
 // Legacy constants (deprecated)
 constexpr uint8_t PIN_MIN_LENGTH = 4;
