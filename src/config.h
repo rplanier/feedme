@@ -238,15 +238,29 @@ constexpr uint8_t INACTIVITY_MAX_MINUTES = 60;     // Maximum timeout (minutes)
 constexpr uint8_t DEFAULT_INACTIVITY_TIMEOUT_MIN = 5;  // Default: 5 minutes
 constexpr uint8_t INACTIVITY_NEVER = 0;            // 0 = never enter light sleep
 
-// Voltage divider ratio: theoretical 100K/22K = 5.545
-// Calibrated based on actual measurements (accounts for resistor tolerance and ADC error)
-constexpr float BATTERY_DIVIDER_RATIO = 5.95f;
+// Voltage divider ratio for BATT_SENSE and SOLAR_SENSE.
+// Both dividers on the FeedMe PCB are identical: 100K high side (R8 / R6),
+// 27K low side (R7 / R5).  Ratio = (100K + 27K) / 27K = 4.7037
+//
+// This is the true resistor ratio and nothing else.  It is only correct because
+// Battery::readMilliVolts() converts raw ADC counts through the chip's factory
+// eFuse calibration curve for the channel's attenuation.
+//
+// Do NOT "calibrate" this constant against a multimeter to absorb ADC error.
+// Verified 2026-09-29 on v0.1c: firmware 12.40 V vs meter 12.44 V with this
+// ratio.  If readings are off, fix the measurement, not this number.  (The
+// bring-up "error" that looked like a bad ratio was a 100K resistor fitted in
+// C11's spot loading the divider.)
+constexpr float BATTERY_DIVIDER_RATIO = 4.7037f;
 
-// ADC reference voltage
-constexpr float ADC_REFERENCE_VOLTAGE = 3.3f;
-
-// ADC resolution (ESP32-C3 is 12-bit)
-constexpr uint16_t ADC_MAX_VALUE = 4095;
+// ADC attenuation switching for 6 V packs.
+// 12 dB gives 0-3300 mV (+-40 mV total error).  6 dB gives 0-1900 mV (+-23 mV).
+// A 6 V pack maxes at ~7.4 V charging = 1.57 V at the divider, so it fits inside
+// 6 dB -- and the tighter error matters because 6 V thresholds are only 0.20 V
+// apart, against +-0.19 V of error at 12 dB.  Switch with hysteresis, safely
+// between a 6 V pack's ceiling (~7.4 V) and a 12 V pack's floor (~10.8 V).
+constexpr float ADC_ATTEN_SWITCH_TO_6DB = 8.0f;   // below this -> use 6 dB
+constexpr float ADC_ATTEN_SWITCH_TO_12DB = 8.5f;  // above this -> use 12 dB
 
 // Battery chemistry type (affects state-of-charge thresholds)
 enum class BatteryType : uint8_t {
