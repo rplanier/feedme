@@ -34,6 +34,12 @@ public:
     void formatDateLocal(char* buffer, size_t len, int16_t tzOffset);
     void formatDateTimeLocal(char* buffer, size_t len, int16_t tzOffset);
 
+    // DST-aware format helpers using system POSIX timezone (set via setenv("TZ",...))
+    // These use localtime_r() which automatically handles DST transitions
+    void formatTimeLocalDST(char* buffer, size_t len);
+    void formatDateLocalDST(char* buffer, size_t len);
+    void formatDateTimeLocalDST(char* buffer, size_t len);
+
     // Get local DateTime (applies timezone offset)
     DateTime nowLocal(int16_t tzOffset);
 

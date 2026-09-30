@@ -321,10 +321,9 @@ void loop() {
 
         StatusData status = {};
 
-        // Time (convert UTC to local for display)
-        int16_t tzOffset = storage.getSettings().timezoneOffset;
-        rtcManager.formatTimeLocal(status.currentTime, sizeof(status.currentTime), tzOffset);
-        rtcManager.formatDateLocal(status.currentDate, sizeof(status.currentDate), tzOffset);
+        // Time (convert UTC to local for display using POSIX TZ for automatic DST handling)
+        rtcManager.formatTimeLocalDST(status.currentTime, sizeof(status.currentTime));
+        rtcManager.formatDateLocalDST(status.currentDate, sizeof(status.currentDate));
 
         // Battery
         status.batteryVoltage = battery.getVoltage();

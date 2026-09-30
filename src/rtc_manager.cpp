@@ -176,3 +176,29 @@ void RTCManager::formatDateTimeLocal(char* buffer, size_t len, int16_t tzOffset)
              DAY_NAMES[dt.dayOfTheWeek()], MONTH_NAMES[dt.month() - 1], dt.day(),
              dt.hour(), dt.minute());
 }
+
+// DST-aware formatting using system POSIX timezone (localtime_r handles DST automatically)
+
+void RTCManager::formatTimeLocalDST(char* buffer, size_t len) {
+    time_t utcTime = (time_t)now().unixtime();
+    struct tm localTm;
+    localtime_r(&utcTime, &localTm);
+    snprintf(buffer, len, "%02d:%02d", localTm.tm_hour, localTm.tm_min);
+}
+
+void RTCManager::formatDateLocalDST(char* buffer, size_t len) {
+    time_t utcTime = (time_t)now().unixtime();
+    struct tm localTm;
+    localtime_r(&utcTime, &localTm);
+    snprintf(buffer, len, "%s %s %02d", DAY_NAMES[localTm.tm_wday],
+             MONTH_NAMES[localTm.tm_mon], localTm.tm_mday);
+}
+
+void RTCManager::formatDateTimeLocalDST(char* buffer, size_t len) {
+    time_t utcTime = (time_t)now().unixtime();
+    struct tm localTm;
+    localtime_r(&utcTime, &localTm);
+    snprintf(buffer, len, "%s %s %02d %02d:%02d",
+             DAY_NAMES[localTm.tm_wday], MONTH_NAMES[localTm.tm_mon],
+             localTm.tm_mday, localTm.tm_hour, localTm.tm_min);
+}
