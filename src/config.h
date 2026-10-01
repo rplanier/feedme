@@ -6,7 +6,7 @@
 // Version
 // =============================================================================
 
-constexpr char FEEDME_VERSION[] = "0.1d";
+constexpr char FEEDME_VERSION[] = "0.1e";
 // Compile-time stamp of the running image, defined once in main.cpp so every
 // user of it (boot banner, BLE device info) reports the same value. The version
 // string does not change between builds; this is how an OTA update is verified.
@@ -386,6 +386,10 @@ constexpr uint32_t WIFI_IDLE_TIMEOUT_MS = 5 * 60 * 1000;  // 5 minutes, once a c
 // minutes: go back to Bluetooth. Reported to the app over BLE so its countdown
 // matches.
 constexpr uint32_t WIFI_NO_CLIENT_TIMEOUT_MS = 60 * 1000;
+// An upload that stops delivering data (phone left WiFi mid-transfer) is
+// abandoned after this long, so the feeder does not sit in UPLOADING, which
+// blocks the WiFi timers, until the light-sleep timer eventually rescues it.
+constexpr uint32_t OTA_UPLOAD_STALL_MS = 15 * 1000;
 
 // =============================================================================
 // BLE Settings

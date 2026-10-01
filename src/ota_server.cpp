@@ -84,6 +84,15 @@ void OTAServer::update() {
         Serial.flush();
         ESP.restart();
     }
+
+    // Phone dropped off WiFi mid-upload: abandon the write and leave WiFi
+    // mode now. Nothing is coming to finish it, and UPLOADING otherwise
+    // suppresses every WiFi timer.
+    if (state == State::UPLOADING && (millis() - lastChunkAt) >= OTA_UPLOAD_STALL_MS) {
+        Update.abort();
+        failUpload("Upload stalled, no data received");
+        exitRequested = true;
+    }
 }
 
 uint8_t OTAServer::getProgressPercent() const {
@@ -105,6 +114,7 @@ void OTAServer::handleUploadChunk(AsyncWebServerRequest* request, size_t index,
                                   uint8_t* data, size_t len, bool final) {
     // A long upload must not trip the WiFi idle timeout mid-transfer
     wifiManager.resetIdleTimer();
+    lastChunkAt = millis();
 
     if (index == 0) {
         totalBytes = request->contentLength();

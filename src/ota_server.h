@@ -57,6 +57,7 @@ private:
     size_t totalBytes = 0;
     uint32_t rebootAt = 0;
     bool exitRequested = false;
+    uint32_t lastChunkAt = 0;  // millis() of the last upload data received
     char errorMessage[64] = "";
 
     void registerRoutes();
