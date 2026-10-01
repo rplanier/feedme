@@ -113,6 +113,14 @@ void OTAServer::handleUploadChunk(AsyncWebServerRequest* request, size_t index,
         state = State::UPLOADING;
         DEBUG_PRINTF("OTA: Upload started (%u bytes)\n", (unsigned)totalBytes);
 
+        // Every ESP32 app image starts with 0xE9. Anything else means the
+        // uploader sent the wrong file or a malformed multipart body, and the
+        // Update library would otherwise report it as a "Decryption error".
+        if (len == 0 || data[0] != 0xE9) {
+            failUpload("Not an ESP32 firmware image (bad header)");
+            return;
+        }
+
         // UPDATE_SIZE_UNKNOWN sizes the write to the whole inactive OTA slot;
         // this fails outright if the partition table has no second app slot
         if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
