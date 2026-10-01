@@ -70,6 +70,15 @@ void RadioManager::update() {
             return;
         }
 
+        // App cancelled the update: go back to BLE now, not in five minutes.
+        // Deferred by a short grace so the HTTP response gets out first.
+        if (otaServer.consumeExitRequest()) {
+            DEBUG_PRINTLN("RadioManager: OTA exit requested, returning to BLE");
+            delay(200);
+            transitionToBle();
+            return;
+        }
+
         // Check for WiFi idle timeout
         if (shouldWifiAutoStop()) {
             DEBUG_PRINTLN("RadioManager: WiFi idle timeout");

@@ -32,6 +32,9 @@ public:
     bool isRunning() const { return running; }
     State getState() const { return state; }
 
+    // True once, after the app asked (POST /exit) to leave WiFi mode early.
+    bool consumeExitRequest();
+
     // Upload progress as 0-100; 0 when no upload is in flight
     uint8_t getProgressPercent() const;
 
@@ -53,6 +56,7 @@ private:
     size_t bytesWritten = 0;
     size_t totalBytes = 0;
     uint32_t rebootAt = 0;
+    bool exitRequested = false;
     char errorMessage[64] = "";
 
     void registerRoutes();

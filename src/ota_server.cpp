@@ -150,6 +150,14 @@ void OTAServer::handleUploadChunk(AsyncWebServerRequest* request, size_t index,
     }
 }
 
+bool OTAServer::consumeExitRequest() {
+    if (!exitRequested) {
+        return false;
+    }
+    exitRequested = false;
+    return true;
+}
+
 void OTAServer::registerRoutes() {
     server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
         request->send(200, "text/html", UPLOAD_PAGE);
@@ -195,6 +203,20 @@ void OTAServer::registerRoutes() {
             (void)filename;
             handleUploadChunk(request, index, data, len, final);
         });
+
+    // The app calls this when the user cancels an update, so the feeder does
+    // not sit on WiFi, invisible to Bluetooth, until the idle timeout expires.
+    server.on("/exit", HTTP_POST, [this](AsyncWebServerRequest* request) {
+        if (state == State::UPLOADING) {
+            request->send(409, "application/json",
+                          "{\"status\":\"error\",\"message\":\"Upload in progress\"}");
+            return;
+        }
+        exitRequested = true;
+        request->send(200, "application/json",
+                      "{\"status\":\"ok\",\"message\":\"Returning to Bluetooth\"}");
+        DEBUG_PRINTLN("OTA: Exit requested by app");
+    });
 
     server.onNotFound([](AsyncWebServerRequest* request) {
         // Captive-portal friendly: send stray requests to the upload page
