@@ -6,7 +6,7 @@
 // Version
 // =============================================================================
 
-constexpr char FEEDME_VERSION[] = "0.1b";
+constexpr char FEEDME_VERSION[] = "0.1c";
 // Compile-time stamp of the running image, defined once in main.cpp so every
 // user of it (boot banner, BLE device info) reports the same value. The version
 // string does not change between builds; this is how an OTA update is verified.
