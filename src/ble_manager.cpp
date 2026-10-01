@@ -74,6 +74,7 @@ void ServerCallbacks::onDisconnect(BLEServer* pServer) {
 void DeviceInfoCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     JsonDocument doc;
     doc["version"] = FEEDME_VERSION;
+    doc["build"] = FEEDME_BUILD;
     doc["deviceId"] = storage.getDeviceId();
     doc["locked"] = !manager->getSession().authenticated;
     // "pinSet" now indicates whether device requires pairing (always true for security)

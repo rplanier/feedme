@@ -15,6 +15,8 @@
 #include "time_format.h"
 #include "light_sleep_manager.h"
 
+const char* const FEEDME_BUILD = __DATE__ " " __TIME__;
+
 // =============================================================================
 // State tracking
 // =============================================================================
@@ -88,7 +90,7 @@ void setup() {
     // builds, so this is how a console confirms an OTA update actually landed.
     {
         const esp_partition_t* running = esp_ota_get_running_partition();
-        DEBUG_PRINTF("Build: %s %s, running from %s\n", __DATE__, __TIME__,
+        DEBUG_PRINTF("Build: %s, running from %s\n", FEEDME_BUILD,
                      running ? running->label : "?");
     }
     DEBUG_PRINTF("Reset reason: %s\n", getResetReasonString());
