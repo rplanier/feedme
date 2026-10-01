@@ -38,6 +38,7 @@ public:
 
 private:
     bool wifiRunning = false;
+    bool hadClient = false;  // any station joined since the AP started
     bool initialized = false;
     uint32_t idleStartTime = 0;
     int clientCount = 0;

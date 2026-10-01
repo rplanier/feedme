@@ -643,6 +643,8 @@ void WifiOtaCallbacks::onRead(BLECharacteristic* pCharacteristic) {
     doc["ssid"] = radioManager.getWifiSSID();
     doc["password"] = radioManager.getWifiPassword();
     doc["ip"] = WiFiManager::AP_IP;
+    // Seconds the feeder waits for a phone to join before returning to BLE
+    doc["joinTimeoutSec"] = WIFI_NO_CLIENT_TIMEOUT_MS / 1000;
 
     String output;
     serializeJson(doc, output);

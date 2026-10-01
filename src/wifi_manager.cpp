@@ -45,6 +45,9 @@ void WiFiManager::update() {
     int currentClients = WiFi.softAPgetStationNum();
     if (currentClients != clientCount) {
         clientCount = currentClients;
+        if (currentClients > 0) {
+            hadClient = true;
+        }
         DEBUG_PRINTF("WiFi: %d client(s) connected\n", clientCount);
     }
 
@@ -60,6 +63,7 @@ void WiFiManager::start() {
 
     setupAP();
     wifiRunning = true;
+    hadClient = false;
     idleStartTime = millis();  // Start the idle timer
     DEBUG_PRINTLN("WiFi: AP started, idle timer started");
 }
@@ -86,7 +90,8 @@ bool WiFiManager::shouldAutoStop() const {
     if (!wifiRunning) {
         return false;
     }
-    return (millis() - idleStartTime) >= WIFI_IDLE_TIMEOUT_MS;
+    uint32_t limit = hadClient ? WIFI_IDLE_TIMEOUT_MS : WIFI_NO_CLIENT_TIMEOUT_MS;
+    return (millis() - idleStartTime) >= limit;
 }
 
 uint32_t WiFiManager::getRemainingIdleSeconds() const {
