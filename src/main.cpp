@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "esp_ota_ops.h"
 #include <esp_sleep.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
@@ -83,6 +84,13 @@ void setup() {
 
     DEBUG_PRINTLN("\n=== FeedMe ===");
     DEBUG_PRINTF("Version: %s\n", FEEDME_VERSION);
+    // Build stamp and OTA slot: the version string does not change between
+    // builds, so this is how a console confirms an OTA update actually landed.
+    {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        DEBUG_PRINTF("Build: %s %s, running from %s\n", __DATE__, __TIME__,
+                     running ? running->label : "?");
+    }
     DEBUG_PRINTF("Reset reason: %s\n", getResetReasonString());
     DEBUG_PRINTF("Wake reason: %d\n", wakeReason);
 
