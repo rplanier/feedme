@@ -323,8 +323,8 @@ void loop() {
         // Log current radio state
         DEBUG_PRINTF("State: mode=%s, bleRunning=%d, bleAdvertising=%d, lightSleep=%d, inactivity=%lums\n",
             radioManager.getModeName(),
-            radioManager.isBleActive(),
-            radioManager.isBleActive() ? bleManager.isActuallyAdvertising() : 0,
+            bleManager.isRunning(),  // the stack's own state, not the radio mode
+            bleManager.isActuallyAdvertising(),
             lightSleepManager.isLightSleepEnabled(),
             lightSleepManager.getTimeSinceLastActivity());
 

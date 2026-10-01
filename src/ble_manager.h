@@ -117,6 +117,9 @@ public:
 private:
     bool running = false;
     bool initialized = false;
+public:
+    bool isInitialized() const { return initialized; }
+private:
     bool clientConnected = false;
     std::atomic<bool> wakeRequested{false};
     std::atomic<bool> wifiOtaRequested{false};

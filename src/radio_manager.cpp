@@ -1,6 +1,7 @@
 #include "radio_manager.h"
 #include "config.h"
 #include "ota_server.h"
+#include "storage.h"
 
 RadioManager radioManager;
 
@@ -187,6 +188,13 @@ void RadioManager::stopWifi() {
 }
 
 void RadioManager::startBle() {
+    // stopBle() deinitialises the whole stack (needed for a clean WiFi
+    // handoff), so coming back means re-creating it, not just re-advertising.
+    // Without this, every WiFi session that did not end in a reboot left the
+    // feeder silent until power-cycled.
+    if (!bleManager.isInitialized()) {
+        bleManager.begin(storage.getDeviceId());
+    }
     bleManager.start();
 }
 
