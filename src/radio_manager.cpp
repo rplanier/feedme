@@ -120,8 +120,20 @@ void RadioManager::transitionToBle() {
     DEBUG_PRINTLN("RadioManager: Transitioning to BLE");
 
     // Stop WiFi first if running
-    if (currentMode == Mode::WIFI) {
+    bool wasWifi = (currentMode == Mode::WIFI);
+    if (wasWifi) {
         stopWifi();
+    }
+
+    // Coming back from WiFi (an update that finished, failed or was cancelled):
+    // always bring BLE up so the app can reach the feeder, whatever the windows
+    // say. checkBleSchedules() stops it again after the inactivity timeout.
+    // Without this a failed update outside a window left the feeder silent.
+    if (wasWifi) {
+        lightSleepManager.resetActivityTimer();
+        startBle();
+        currentMode = Mode::BLE;
+        return;
     }
 
     // During boot grace period, always start BLE regardless of schedules
