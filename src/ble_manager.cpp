@@ -828,12 +828,18 @@ void BLEManager::begin(const char* deviceId) {
     // Initialize BLE
     BLEDevice::init(deviceName);
 
-    // Set maximum TX power for better range
-    BLEDevice::setPower(ESP_PWR_LVL_P9);  // +9 dBm (maximum)
+    // Maximum TX power. The ESP32-C6 goes to +20 dBm (+9 was mistaken for the
+    // ceiling). DEFAULT covers connections; advertising has its own setting.
+    // This only strengthens feeder -> phone; the phone's own TX is unchanged.
+    BLEDevice::setPower(ESP_PWR_LVL_P20, ESP_BLE_PWR_TYPE_DEFAULT);
+    BLEDevice::setPower(ESP_PWR_LVL_P20, ESP_BLE_PWR_TYPE_ADV);
+    DEBUG_PRINTF("BLE: TX power level default=%d adv=%d (15 = +20 dBm)\n",
+                 esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_DEFAULT),
+                 esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_ADV));
 
-    // Enable Coded PHY (BLE Long Range) for ~300m range vs ~50m with standard 1M PHY
-    // S=8 coding: 125 kbps data rate, maximum range
-    // This sets the default PHY preference for all future connections
+    // Prefer Coded PHY (BLE Long Range) where the central supports it.
+    // iPhones do not, so phone connections stay on 1M PHY; do not count on
+    // Coded PHY range for the app.
     int phyResult = ble_gap_set_prefered_default_le_phy(
         BLE_GAP_LE_PHY_CODED_MASK,  // TX: prefer Coded PHY
         BLE_GAP_LE_PHY_CODED_MASK   // RX: prefer Coded PHY
