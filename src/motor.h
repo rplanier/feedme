@@ -38,8 +38,9 @@ private:
     uint32_t runDurationMs = 0;
     uint8_t defaultDuration = MOTOR_DEFAULT_DURATION_SEC;
 
-    // Hardware timer handle for safety cutoff
+    // Hardware timer handle for safety cutoff; exists only while a feed runs
     hw_timer_t* safetyTimer = nullptr;
+    void endSafetyTimer();
 
     // Stall detection -- see config.h for the rationale and calibration note
     float baselineVoltage = 0.0f;   // pack voltage immediately before the feed

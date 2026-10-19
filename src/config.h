@@ -289,6 +289,10 @@ constexpr bool MOTOR_SAG_TRACE = false;           // calibration aid, see above
 constexpr uint16_t MOTOR_SAG_TRACE_MS = 100;
 constexpr uint16_t MOTOR_STALL_SAMPLE_MS = 50;    // check interval during a feed
 constexpr uint8_t MOTOR_STALL_CONFIRM = 3;        // consecutive samples before abort
+// Field install 2026-10-18 (real spinner + feed, fused lead): every feed sagged
+// past 2.0 V and aborted at 2-3 s.  Until the limit is recalibrated on a real
+// install, the detector only logs; the 30 s safety timer still caps a jam.
+constexpr bool MOTOR_STALL_ABORT = false;
 
 // ADC attenuation switching for 6 V packs.
 // 12 dB gives 0-3300 mV (+-40 mV total error).  6 dB gives 0-1900 mV (+-23 mV).

@@ -11,13 +11,16 @@ void Motor::begin() {
     pinMode(PIN_MOTOR_RELAY, OUTPUT);
     deactivateMotor();
 
-    // Initialize hardware safety timer
-    // ESP32 Arduino 3.x API: timerBegin(frequency_hz) returns timer handle
-    // Using 1MHz frequency (1µs resolution)
-    safetyTimer = timerBegin(1000000);
+    // The hardware safety timer is created per feed in start() and deleted in
+    // stop(): while a GPTimer exists it holds a NO_LIGHT_SLEEP lock, so one
+    // created here blocked light sleep for the whole uptime.
+}
+
+// Delete the safety timer, releasing its NO_LIGHT_SLEEP lock
+void Motor::endSafetyTimer() {
     if (safetyTimer) {
-        timerAttachInterrupt(safetyTimer, &Motor::onSafetyTimeout);
-        // Don't set alarm yet - will be set when motor starts
+        timerEnd(safetyTimer);
+        safetyTimer = nullptr;
     }
 }
 
@@ -31,9 +34,7 @@ void Motor::update() {
             lastRunMs = millis() - startTime;
         }
         running = false;
-        if (safetyTimer) {
-            timerStop(safetyTimer);
-        }
+        endSafetyTimer();
         battery.setSamplingPaused(false);
         DEBUG_PRINTLN("Motor: SAFETY TIMEOUT - motor stopped");
     }
@@ -91,7 +92,8 @@ void Motor::checkForStall() {
     if (sag >= MOTOR_STALL_SAG_VOLTS) {
         // Require consecutive samples: a single deep reading is more likely to
         // be ADC noise or a transient than a genuine jam.
-        if (++stallCount >= MOTOR_STALL_CONFIRM) {
+        // With the abort disabled the peak sag still appears in the normal-stop log
+        if (MOTOR_STALL_ABORT && ++stallCount >= MOTOR_STALL_CONFIRM) {
             stalled = true;
             stop();
             DEBUG_PRINTF("Motor: STALL DETECTED - sag %.2fV (limit %.2fV), stopped after %lums\n",
@@ -120,10 +122,6 @@ void Motor::startThrow(uint8_t durationSec) {
     runDurationMs = duration * 1000UL;
     startTime = millis();
 
-    // Snapshot the resting pack voltage before the motor loads it.  getVoltage()
-    // is the smoothed value, which is what we want for a baseline -- and it stays
-    // a resting value because sampling is paused for the duration of the feed.
-    baselineVoltage = battery.getVoltage();
     battery.setSamplingPaused(true);
     lastSagVolts = 0.0f;
     lastStallCheck = millis();
@@ -132,11 +130,29 @@ void Motor::startThrow(uint8_t durationSec) {
     stalled = false;
 
     // Start safety timer before activating motor
-    // ESP32 Arduino 3.x API: timerAlarm(timer, alarm_value_us, autoreload, reload_count)
+    // ESP32 Arduino 3.x API: timerBegin(frequency_hz) starts counting at 0;
+    // timerAlarm(timer, alarm_value_us, autoreload, reload_count)
+    endSafetyTimer();  // never leak one from an earlier feed
+    safetyTimer = timerBegin(1000000);  // 1 MHz, 1 µs resolution
     if (safetyTimer) {
-        timerRestart(safetyTimer);
+        timerAttachInterrupt(safetyTimer, &Motor::onSafetyTimeout);
         timerAlarm(safetyTimer, MOTOR_MAX_DURATION_SEC * 1000000ULL, false, 0);
+    } else {
+        DEBUG_PRINTLN("Motor: WARNING - safety timer unavailable, relying on loop timing");
     }
+
+    // Snapshot the resting pack voltage just before the motor loads it, under the
+    // same conditions as the stall samples.  The smoothed getVoltage() is built
+    // from reads taken between light-sleep cycles, while the safety timer keeps
+    // the chip awake for the whole feed; the two disagreed by enough to trip the
+    // stall limit on every field feed (2026-10-18).  First read is a throwaway.
+    battery.readInstantVoltage();
+    float baselineSum = 0.0f;
+    for (int i = 0; i < 8; i++) {
+        baselineSum += battery.readInstantVoltage();
+        delayMicroseconds(200);
+    }
+    baselineVoltage = baselineSum / 8;
 
     activateMotor();
     running = true;
@@ -152,10 +168,8 @@ void Motor::stop() {
     running = false;
     battery.setSamplingPaused(false);
 
-    // Stop safety timer (ESP32 Arduino 3.x API)
-    if (safetyTimer) {
-        timerStop(safetyTimer);
-    }
+    // Delete the safety timer so it stops blocking light sleep
+    endSafetyTimer();
 
     DEBUG_PRINTLN("Motor: Stopped");
 }
