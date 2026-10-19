@@ -974,6 +974,11 @@ void BLEManager::start() {
     pAdvertising->setScanResponse(true);
     pAdvertising->setMinPreferred(0x06);  // Helps with iPhone connection issues
     pAdvertising->setMinPreferred(0x12);
+    // Advertise every ~0.5-0.75 s (units of 0.625 ms; Apple-recommended
+    // 546.25 / 760 ms). The library default of 20-60 ms kept the radio busy
+    // ~15x per second during every BLE window. Discovery takes ~1 s longer.
+    pAdvertising->setMinInterval(874);
+    pAdvertising->setMaxInterval(1216);
     BLEDevice::startAdvertising();
 
     running = true;
