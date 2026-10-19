@@ -728,6 +728,7 @@ void BleSchedulesCallbacks::onRead(BLECharacteristic* pCharacteristic) {
 
         JsonObject obj = arr.add<JsonObject>();
         obj["id"] = s->id;
+        obj["name"] = s->name;  // the app's BleSchedule requires it; without it the whole list fails to decode
         obj["startHour"] = s->startHour;
         obj["startMinute"] = s->startMinute;
         obj["endHour"] = s->endHour;
