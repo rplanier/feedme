@@ -327,6 +327,7 @@ void loop() {
             bleManager.isActuallyAdvertising(),
             lightSleepManager.isLightSleepEnabled(),
             lightSleepManager.getTimeSinceLastActivity());
+        lightSleepManager.logStats();
 
         // BLE health check - restart advertising if it stopped unexpectedly
         if (radioManager.ensureBleHealthy()) {

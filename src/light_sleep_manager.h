@@ -43,6 +43,10 @@ public:
     // Check if light sleep is currently enabled
     bool isLightSleepEnabled() const { return lightSleepEnabled; }
 
+    // Print power-management stats (time per mode, PM lock holders) to the
+    // debug console. Full detail needs CONFIG_PM_PROFILING.
+    void logStats() const;
+
 private:
     bool initialized = false;
     bool lightSleepEnabled = false;
