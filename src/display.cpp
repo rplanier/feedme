@@ -1011,11 +1011,12 @@ void Display::drawScreensaver() {
         epd.setCursor(textX, 50);
         epd.print("FeedMe");
 
-        // "Press button to wake" below
+        // "Press button for status" below (the device is running, only the
+        // screen is idle, so "to wake" promised more than a press does)
         epd.setFont(&FreeSans9pt7b);
         epd.setCursor(textX, 75);
         epd.print("Press button");
         epd.setCursor(textX, 93);
-        epd.print("to wake");
+        epd.print("for status");
     } while (epd.nextPage());
 }
