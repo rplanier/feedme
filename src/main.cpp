@@ -313,6 +313,18 @@ void loop() {
         radioManager.checkBleSchedules();
     }
 
+#ifdef FEEDME_TEST_WIFI
+    // Bench test: force the BLE -> WiFi switch without a phone
+    {
+        static bool fired = false;
+        if (!fired && millis() > 20000) {
+            fired = true;
+            DEBUG_PRINTLN("TEST: forcing BLE -> WiFi transition");
+            radioManager.transitionToWifi();
+        }
+    }
+#endif
+
     // Update radio manager (handles BLE wake requests, WiFi idle timeout, etc.)
     radioManager.update();
 
