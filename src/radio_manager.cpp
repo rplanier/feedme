@@ -104,6 +104,10 @@ void RadioManager::transitionToWifi() {
         delay(BLE_DEINIT_DELAY_MS);
     }
 
+    // Keep the CPU awake for the OTA access point and upload; the main loop
+    // re-enables light sleep after its inactivity timeout once back on BLE.
+    lightSleepManager.disableLightSleep();
+
     startWifi();
     currentMode = Mode::WIFI;
 }
