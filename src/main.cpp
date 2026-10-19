@@ -396,7 +396,11 @@ void loop() {
     // Handle sleep timeout
     handleSleepTimeout();
 
-    delay(10);
+    // Wake less often when idle in light sleep; stay at 10 ms while the motor
+    // runs (stall detection) or a button is held
+    bool idleLightSleep = lightSleepManager.isLightSleepEnabled() && !motor.isRunning()
+                          && !buttons.isNextPressed();
+    delay(idleLightSleep ? LOOP_DELAY_LIGHT_SLEEP_MS : LOOP_DELAY_MS);
 }
 
 // =============================================================================
@@ -475,13 +479,25 @@ void handleSleepTimeout() {
             DEBUG_PRINTLN("Sleep: Light sleep with BLE (in window)");
             sleepLoggedOnce = true;
         }
-    } else {
+    } else if (DEEP_SLEEP_OUTSIDE_BLE_WINDOWS) {
         // OUTSIDE BLE window: Deep sleep for maximum power savings
         // Device will wake at next scheduled event (feed or BLE window)
         lightSleepManager.disableLightSleep();
         radioManager.transitionToIdle();
         DEBUG_PRINTLN("Sleep: Entering deep sleep (outside BLE window)");
         enterDeepSleep();
+    } else {
+        // OUTSIDE BLE window: light sleep with BLE off. The loop keeps
+        // running feeds on schedule, checkBleSchedules() restarts BLE when a
+        // window opens, and the button still works (see config.h).
+        if (radioManager.getMode() != RadioManager::Mode::IDLE) {
+            radioManager.transitionToIdle();
+        }
+        lightSleepManager.enableLightSleepWithBle();
+        if (!sleepLoggedOnce) {
+            DEBUG_PRINTLN("Sleep: Light sleep, BLE off (outside window)");
+            sleepLoggedOnce = true;
+        }
     }
 }
 
@@ -511,9 +527,18 @@ void enterDeepSleep() {
         ESP_GPIO_WAKEUP_GPIO_LOW
     );
     #else
-    // ESP32-S3 and other variants: use ext1
+    // ESP32-S3 and other variants: use ext1. Only pins that are buttons on
+    // this build: in single-button mode PIN_BUTTON_NEXT is EPD_BUSY. The C6
+    // rejects pins outside GPIO0-7, so report it instead of failing silently.
+    #if SINGLE_BUTTON_MODE
+    uint64_t buttonMask = (1ULL << PIN_BUTTON);
+    #else
     uint64_t buttonMask = (1ULL << PIN_BUTTON_PREV) | (1ULL << PIN_BUTTON_NEXT);
-    esp_sleep_enable_ext1_wakeup(buttonMask, ESP_EXT1_WAKEUP_ANY_LOW);
+    #endif
+    esp_err_t wakeErr = esp_sleep_enable_ext1_wakeup(buttonMask, ESP_EXT1_WAKEUP_ANY_LOW);
+    if (wakeErr != ESP_OK) {
+        DEBUG_PRINTF("WARNING: button cannot wake from deep sleep (%s)\n", esp_err_to_name(wakeErr));
+    }
     #endif
 
     // Flush serial before sleep

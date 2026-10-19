@@ -242,6 +242,18 @@ constexpr uint8_t INACTIVITY_MAX_MINUTES = 60;     // Maximum timeout (minutes)
 constexpr uint8_t DEFAULT_INACTIVITY_TIMEOUT_MIN = 5;  // Default: 5 minutes
 constexpr uint8_t INACTIVITY_NEVER = 0;            // 0 = never enter light sleep
 
+// Outside BLE windows: deep sleep (lowest power) or light sleep with BLE off.
+// Deep sleep is off because the button cannot wake it: the C6 only wakes from
+// deep sleep on GPIO0-7, and BTN1 is GPIO16. Light sleep wakes on any pin, so
+// the button keeps working. Set true once a board revision moves the button to
+// a wake-capable pin.
+constexpr bool DEEP_SLEEP_OUTSIDE_BLE_WINDOWS = false;
+
+// Main-loop delay while light sleep is on. Each pass wakes the CPU; 10 ms meant
+// 100 wakeups/s. 50 ms still catches a firm button press.
+constexpr uint32_t LOOP_DELAY_MS = 10;
+constexpr uint32_t LOOP_DELAY_LIGHT_SLEEP_MS = 50;
+
 // Voltage divider ratio for BATT_SENSE and SOLAR_SENSE.
 // Both dividers on the FeedMe PCB are identical: 100K high side (R8 / R6),
 // 27K low side (R7 / R5).  Ratio = (100K + 27K) / 27K = 4.7037
