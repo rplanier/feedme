@@ -1,5 +1,6 @@
 #include "radio_manager.h"
 #include "config.h"
+#include "light_sleep_manager.h"
 #include "ota_server.h"
 #include "storage.h"
 
@@ -169,6 +170,16 @@ void RadioManager::checkBleSchedules() {
         startBle();
         currentMode = Mode::BLE;
     } else if (!shouldBeActive && currentMode == Mode::BLE) {
+        // Leaving a window: wait for the phone to disconnect and the
+        // inactivity timeout to run out, as the sleep logic does. Cutting BLE
+        // on the spot dropped the app a second after it saved a window.
+        if (isBleClientConnected()) {
+            return;
+        }
+        uint32_t timeoutMs = storage.getSettings().getInactivityTimeoutMs();
+        if (!lightSleepManager.hasTimedOut(timeoutMs)) {
+            return;
+        }
         DEBUG_PRINTLN("RadioManager: BLE schedule inactive - stopping BLE");
         stopBle();
         currentMode = Mode::IDLE;

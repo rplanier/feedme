@@ -442,7 +442,7 @@ void handleSleepTimeout() {
     }
 
     // Determine sleep behavior based on BLE schedules
-    bool hasBleSchedules = storage.getBleScheduleCount() > 0;
+    bool hasBleSchedules = storage.hasEnabledBleSchedules();
     bool inBleWindow = storage.shouldBleBeActive();
 
     if (!hasBleSchedules) {

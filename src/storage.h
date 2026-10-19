@@ -185,6 +185,10 @@ public:
     void loadBleSchedules();
     String getBleSchedulesJson();
 
+    // Windows that are switched on; disabled ones must not count as "BLE is
+    // scheduled", or saving only disabled windows turns BLE off for good
+    bool hasEnabledBleSchedules();
+
     // Check if BLE should be active now based on schedules
     bool shouldBleBeActive();
 

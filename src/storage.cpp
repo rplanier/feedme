@@ -629,9 +629,19 @@ bool BleSchedule::isActiveNow(int hour, int minute, int dayOfWeek) const {
     }
 }
 
+bool Storage::hasEnabledBleSchedules() {
+    for (int i = 0; i < getBleScheduleCount(); i++) {
+        BleSchedule* s = getBleSchedule(i);
+        if (s && s->enabled) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Storage::shouldBleBeActive() {
-    // If no BLE schedules configured, default to always-on
-    if (getBleScheduleCount() == 0) {
+    // If no enabled BLE schedules, default to always-on
+    if (!hasEnabledBleSchedules()) {
         return true;
     }
 
